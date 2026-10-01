@@ -1,31 +1,64 @@
-// Verlauf: Liste aller Trainings (nach Monat gruppiert) und Detailansicht.
+// Verlauf: Kalender oder Liste aller Trainings, Detailansicht.
 
-import { h, toast } from '../ui/dom.js';
+import { h, clear, toast } from '../ui/dom.js';
 import { icon } from '../ui/icons.js';
 import { confirmDialog, promptDialog } from '../ui/sheets.js';
 import { navigate, back } from '../router.js';
 import * as repo from '../repo.js';
 import { startWorkout } from './home.js';
 import { computeAllPRs, sessionStats, workoutVolume, workoutSetCount, epley1RM, PR_LABELS } from '../lib/calc.js';
+import { monthGrid, workoutsByDay, countsByWeek, dayKey, startOfWeek, periodSummary } from '../lib/stats.js';
 import { fmtDate, fmtTime, fmtDuration, fmtMonth, fmtNum, fmtSet, count } from '../lib/format.js';
 
 const PAGE = 40;
+const WEEKDAYS = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
+// Ansicht, Monat und gewählter Tag bleiben beim Zurückkehren erhalten.
+const histState = { mode: 'calendar', year: null, month: null, selected: null };
+
+const fromKey = (k) => { const [y, m, d] = k.split('-').map(Number); return new Date(y, m - 1, d).getTime(); };
 
 export async function historyView() {
   const workouts = await repo.workouts();
   const prs = computeAllPRs(workouts);
+  const { weeklyGoal } = await repo.settings();
   const body = h('div', { class: 'page' });
+  const addBtn = h('button', {
+    class: 'icon-btn', 'aria-label': 'Training nachtragen',
+    onclick: () => {
+      const sel = histState.selected;
+      navigate('/history/add/' + (sel && fromKey(sel) <= Date.now() ? sel : dayKey(Date.now())));
+    },
+  }, icon('plus'));
 
   if (!workouts.length) {
     body.append(h('div', { class: 'empty' },
       icon('history', { size: 40 }),
       h('p', null, 'Noch keine Trainings. Beendete Trainings erscheinen hier.'),
       h('p', { class: 'muted small' }, 'Tipp: Deinen bisherigen Verlauf kannst du unter „Mehr“ aus Strong importieren.')));
-    return { title: 'Verlauf', tab: 'history', body };
+    return { title: 'Verlauf', tab: 'history', body, actions: [addBtn] };
   }
 
+  const seg = h('div', { class: 'segmented' });
+  const content = h('div', { class: 'history-content' });
+  const render = () => {
+    clear(seg);
+    for (const [mode, label] of [['calendar', 'Kalender'], ['list', 'Liste']]) {
+      seg.append(h('button', {
+        class: 'seg' + (histState.mode === mode ? ' active' : ''),
+        onclick: () => { histState.mode = mode; render(); },
+      }, label));
+    }
+    clear(content).append(histState.mode === 'calendar' ? calendarView(workouts, prs, weeklyGoal) : listView(workouts, prs));
+  };
+  render();
+  body.append(seg, content);
+  return { title: 'Verlauf', tab: 'history', body, actions: [addBtn] };
+}
+
+function listView(workouts, prs) {
+  const wrap = h('div');
   const container = h('div');
-  body.append(container);
+  wrap.append(container);
   let shown = 0;
   let lastMonth = null;
   const more = h('button', { class: 'btn secondary block', onclick: () => renderMore() }, 'Weitere laden');
@@ -44,9 +77,114 @@ export async function historyView() {
     if (shown >= workouts.length) more.remove();
   }
   renderMore();
-  if (shown < workouts.length) body.append(more);
+  if (shown < workouts.length) wrap.append(more);
+  return wrap;
+}
 
-  return { title: 'Verlauf', tab: 'history', body };
+function calendarView(workouts, prs, goal) {
+  const now = Date.now();
+  const thisYear = new Date(now).getFullYear();
+  const thisMonth = new Date(now).getMonth();
+  if (histState.year == null) { histState.year = thisYear; histState.month = thisMonth; }
+  const byDay = workoutsByDay(workouts);
+  const weekCounts = countsByWeek(workouts);
+  const prDays = new Set(workouts.filter((w) => prs.get(w.id)?.count).map((w) => dayKey(w.startedAt)));
+  const todayKey = dayKey(now);
+  const wrap = h('div', { class: 'calendar-view' });
+
+  const isCurrentMonth = () => histState.year === thisYear && histState.month === thisMonth;
+  const goTo = (year, month) => {
+    histState.year = year;
+    histState.month = month;
+    histState.selected = null;
+    render();
+  };
+  const shift = (n) => {
+    if (n > 0 && isCurrentMonth()) return; // keine Zukunft
+    const d = new Date(histState.year, histState.month + n, 1);
+    goTo(d.getFullYear(), d.getMonth());
+  };
+
+  function render() {
+    const { year, month } = histState;
+    const first = new Date(year, month, 1).getTime();
+    const nextFirst = new Date(year, month + 1, 1).getTime();
+
+    const grid = h('div', { class: 'cal-grid' },
+      WEEKDAYS.map((d) => h('span', { class: 'cal-dow' }, d)),
+      h('span', { class: 'cal-dow', title: 'Trainings pro Woche' }, 'Wo'));
+    for (const week of monthGrid(year, month)) {
+      for (const ts of week) {
+        const k = dayKey(ts);
+        const list = byDay.get(k) || [];
+        const cls = ['cal-day',
+          new Date(ts).getMonth() !== month && 'out',
+          list.length && 'trained',
+          k === todayKey && 'today',
+          k === histState.selected && 'selected',
+          ts > now && 'future'].filter(Boolean).join(' ');
+        grid.append(h('button', {
+          class: cls,
+          'aria-label': fmtDate(ts) + (list.length ? ', ' + count(list.length, 'Training', 'Trainings') : '') + (prDays.has(k) ? ', Rekord' : ''),
+          'aria-pressed': String(k === histState.selected),
+          onclick: () => { histState.selected = histState.selected === k ? null : k; render(); },
+        },
+        String(new Date(ts).getDate()),
+        prDays.has(k) ? h('span', { class: 'cal-pr' }) : null,
+        list.length > 1 ? h('span', { class: 'cal-multi' }, String(list.length)) : null));
+      }
+      const wc = weekCounts.get(startOfWeek(week[0])) || 0;
+      grid.append(h('span', {
+        class: 'cal-week' + (wc >= goal ? ' met' : ''), title: `${count(wc, 'Training', 'Trainings')} in dieser Woche`,
+      }, wc ? String(wc) : ''));
+    }
+
+    // Wischen nach links/rechts wechselt den Monat
+    let x0 = null, y0 = null;
+    grid.addEventListener('touchstart', (e) => { x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; }, { passive: true });
+    grid.addEventListener('touchend', (e) => {
+      if (x0 == null) return;
+      const dx = e.changedTouches[0].clientX - x0;
+      const dy = e.changedTouches[0].clientY - y0;
+      x0 = null;
+      if (Math.abs(dx) > 50 && Math.abs(dy) < 40) shift(dx < 0 ? 1 : -1);
+    });
+
+    const sum = periodSummary(workouts, first, nextFirst, prs);
+    const sel = histState.selected;
+    const shown = sel ? byDay.get(sel) || [] : workouts.filter((w) => w.startedAt >= first && w.startedAt < nextFirst);
+    const monthName = fmtMonth(first);
+    const mini = (label, value) => h('div', { class: 'stat' }, h('span', { class: 'stat-label' }, label), h('span', { class: 'stat-value' }, value));
+
+    clear(wrap).append(
+      h('section', { class: 'card cal-card' },
+        h('div', { class: 'cal-head' },
+          h('button', { class: 'icon-btn', 'aria-label': 'Vorheriger Monat', onclick: () => shift(-1) }, icon('back')),
+          h('button', { class: 'cal-title', title: 'Zum aktuellen Monat', onclick: () => goTo(thisYear, thisMonth) }, monthName),
+          h('button', { class: 'icon-btn', 'aria-label': 'Nächster Monat', disabled: isCurrentMonth(), onclick: () => shift(1) }, icon('chevron'))),
+        grid,
+        h('div', { class: 'cal-legend muted small' },
+          h('span', { class: 'lg-item' }, h('span', { class: 'lg-dot trained' }), 'Training'),
+          h('span', { class: 'lg-item' }, h('span', { class: 'lg-dot pr' }), 'Rekord'),
+          h('span', { class: 'lg-item' }, `Wo = Trainings/Woche, grün ab ${goal}`))),
+      h('div', { class: 'stat-row month-stats' },
+        mini('Trainings', fmtNum(sum.count, 0)),
+        mini('Zeit', sum.duration ? `${fmtNum(sum.duration / 3600000, 1)} h` : '–'),
+        mini('Volumen', sum.volume >= 10000 ? `${fmtNum(sum.volume / 1000, 1)} t` : `${fmtNum(sum.volume, 0)} kg`),
+        mini('Rekorde', fmtNum(sum.prs, 0))),
+      h('h2', { class: 'month-head' }, sel ? fmtDate(fromKey(sel)) : `Trainings im ${monthName.split(' ')[0]}`),
+      ...(shown.length
+        ? shown.map((w) => workoutCard(w, prs.get(w.id)?.count || 0))
+        : [h('div', { class: 'empty small' },
+          h('p', null, sel ? 'An diesem Tag hast du nicht trainiert.' : 'In diesem Monat hast du nicht trainiert.'),
+          sel && fromKey(sel) <= now
+            ? h('button', { class: 'btn secondary', onclick: () => navigate('/history/add/' + sel) }, icon('plus'), 'Training nachtragen')
+            : null)]),
+    );
+  }
+
+  render();
+  return wrap;
 }
 
 function workoutCard(w, prCount) {

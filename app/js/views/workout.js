@@ -8,6 +8,7 @@ import { navigate, back } from '../router.js';
 import * as repo from '../repo.js';
 import * as active from '../active.js';
 import * as timer from '../timer.js';
+import { uid } from '../lib/uid.js';
 import { lastPerformance, bestsForExercise, detectSetPRs, computeAllPRs, PR_LABELS, setMetrics } from '../lib/calc.js';
 import {
   parseNumber, fmtNum, fmtSet, fmtWeightInput, fmtClock, fmtDateTiny, toDateTimeLocal, fromDateTimeLocal,
@@ -27,7 +28,16 @@ export async function editWorkoutView(id) {
 
 const SET_LABEL = { warmup: 'W', drop: 'D', failure: 'F' };
 
-async function editorView(w, mode) {
+/** Vergessenes Training für einen vergangenen Tag nachtragen (day = "2026-10-01"). */
+export async function addWorkoutView(day) {
+  const [y, m, d] = day.split('-').map(Number);
+  const startedAt = new Date(y, m - 1, d, 18, 0).getTime();
+  if (Number.isNaN(startedAt) || startedAt > Date.now() + 86400000) { navigate('/history', { replace: true }); return null; }
+  const w = { id: uid(), name: 'Training', templateId: null, startedAt, endedAt: startedAt + 3600000, notes: '', exercises: [] };
+  return editorView(w, 'edit', { isNew: true });
+}
+
+async function editorView(w, mode, { isNew = false } = {}) {
   const isActive = mode === 'active';
   const settings = await repo.settings();
   const history = (await repo.workouts()).filter((x) => x.id !== w.id);
@@ -348,6 +358,10 @@ async function editorView(w, mode) {
   async function finish() {
     document.activeElement?.blur();
     const { done, open } = countSets();
+    if (!done && isNew) {
+      toast('Füge eine Übung hinzu und hake mindestens einen Satz ab.');
+      return;
+    }
     if (!done) {
       if (await confirmDialog({
         title: 'Keine Sätze abgehakt', message: 'Es wurde noch kein Satz abgehakt. Möchtest du das Training verwerfen?',
@@ -422,15 +436,20 @@ async function editorView(w, mode) {
     }))) return;
     await repo.saveWorkout(active.toStored({ ...w, startedAt, endedAt }));
     dirty = false;
-    toast('Änderungen gespeichert');
-    back('/history/' + w.id);
+    if (isNew) {
+      toast('Training nachgetragen ✓');
+      navigate('/history/' + w.id, { replace: true });
+    } else {
+      toast('Änderungen gespeichert');
+      back('/history/' + w.id);
+    }
   }
 
   async function cancelEdit() {
     if (dirty && !(await confirmDialog({
       title: 'Änderungen verwerfen?', confirmLabel: 'Verwerfen', danger: true,
     }))) return;
-    back('/history/' + w.id);
+    back(isNew ? '/history' : '/history/' + w.id);
   }
 
   // --- Zusammenbauen ----------------------------------------------------------
@@ -455,7 +474,7 @@ async function editorView(w, mode) {
       cleanup: () => { clearInterval(interval); active.flush(); },
     }
     : {
-      title: 'Bearbeiten',
+      title: isNew ? 'Nachtragen' : 'Bearbeiten',
       back: true,
       onBack: cancelEdit,
       hideTabbar: true,

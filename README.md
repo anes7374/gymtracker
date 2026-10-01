@@ -14,7 +14,16 @@ Läuft komplett offline, ohne Account und ohne Server. Alle Daten bleiben auf de
   Bildschirmsperre und App-Wechsel korrekt weiter.
 - **Fortschritt**: Diagramme für geschätztes 1RM (Epley), schwersten Satz und Volumen pro Training, persönliche Rekorde,
   PR-Markierung direkt beim Loggen.
-- **Verlauf**: alle Trainings, Details, bearbeiten, löschen, erneut trainieren, als Vorlage speichern.
+- **Fortschritt-Tab** mit Zeitraumwahl (4 W / 3 M / 6 M / 1 J / Alle):
+  - **Kraftentwicklung**: Index über alle aktiven Übungen. Jede Übung zählt gleich viel und wird nur mit sich selbst
+    verglichen; Push/Pull-Wechsel, neue Übungen und einzelne leichte Tage verfälschen ihn nicht.
+  - **Trainings pro Woche** mit Wochenziel-Linie und **Wochen-Serie**.
+  - **Sätze pro Muskelgruppe und Woche** mit Richtwert 10–20.
+  - **Übungen im Trend** (▲ besser / → gleich / ▼ schwächer) mit Mini-Verlauf.
+  - Kennzahlen im Vergleich zum vorherigen Zeitraum und neueste Rekorde.
+- **Verlauf** als **Kalender** (Trainingstage, Rekordtage, Trainings pro Woche, Wischen zum Monatswechsel) oder Liste.
+  Trainings für vergangene Tage **nachtragen**. Details, bearbeiten, löschen, erneut trainieren, als Vorlage speichern.
+- **Wochenziel** (Einstellungen) für Serie, Kalender und Startseite.
 - **Backup**: Export als JSON über das iOS-Teilen-Menü (z. B. in iCloud Drive), Import mit „Zusammenführen“ oder „Ersetzen“.
 - **Import aus Strong**: CSV-Export von Strong einlesen. Spalten werden über Namen erkannt, Vorschau vor dem Import,
   Duplikate werden übersprungen (erneuter Import ist gefahrlos).
@@ -34,7 +43,7 @@ app/                    ← das ist die App (wird 1:1 veröffentlicht)
   js/active.js          laufendes Training (übersteht App-Neustart)
   js/timer.js           Pausentimer
   js/pwa.js             Service Worker, Update-Hinweis, persist()
-  js/lib/               reine Logik (getestet): calc, strong-csv, backup, format, exercises-data
+  js/lib/               reine Logik (getestet): calc, stats, strong-csv, backup, format, exercises-data
   js/ui/                DOM-Helfer, Icons, Sheets, Übungsauswahl, Diagramm
   js/views/             Bildschirme
 tests/                  Tests (node --test)

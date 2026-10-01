@@ -34,6 +34,7 @@ export async function homeView() {
   const lastBackupAt = await repo.getMeta('lastBackupAt', null);
   const act = active.get();
   const week = weekSummary(workouts);
+  const { weeklyGoal } = await repo.settings();
 
   const lastUse = new Map();
   for (const w of workouts) if (w.templateId && !lastUse.has(w.templateId)) lastUse.set(w.templateId, w.startedAt);
@@ -52,7 +53,10 @@ export async function homeView() {
   }
 
   body.append(h('div', { class: 'stat-row' },
-    h('div', { class: 'stat' }, h('span', { class: 'stat-label' }, 'Trainings diese Woche'), h('span', { class: 'stat-value' }, String(week.count))),
+    h('button', { class: 'stat', onclick: () => navigate('/progress') },
+      h('span', { class: 'stat-label' }, 'Trainings diese Woche'),
+      h('span', { class: 'stat-value' }, `${week.count} / ${weeklyGoal}`, week.count >= weeklyGoal ? ' ✓' : ''),
+      h('div', { class: 'meter small' }, h('div', { class: 'meter-fill' + (week.count >= weeklyGoal ? ' met' : ''), style: { width: Math.min(100, (week.count / weeklyGoal) * 100) + '%' } }))),
     h('div', { class: 'stat' }, h('span', { class: 'stat-label' }, 'Volumen diese Woche'), h('span', { class: 'stat-value' }, fmtNum(week.volume, 0) + ' kg'))));
 
   if (workouts.length >= 5 && (!lastBackupAt || Date.now() - lastBackupAt > 14 * 86400000)) {

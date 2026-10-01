@@ -26,6 +26,9 @@ const PATHS = {
   copy: ['M9 9h11v11H9z', 'M5 15H4V4h11v1'],
   note: ['M5 4h14v16H5z', 'M9 9h6M9 13h6M9 17h3'],
   restart: ['M4 12a8 8 0 1 0 2.5-5.8', 'M4 4v4h4'],
+  chart: ['M4 4v16h16', 'M8 15l3.5-4 3 2.5L20 7'],
+  flame: ['M12 3c.5 3.5 5 5.5 5 10.5a5 5 0 0 1-10 0c0-2.5 1.5-4 2.5-5 .3 1.8 1.2 3 2.5 3.3C12 9.5 11 6 12 3z'],
+  calendar: ['M4 6h16v14H4z', 'M4 10h16M8 3v4M16 3v4'],
 };
 
 export function icon(name, { size = 24, cls = '' } = {}) {

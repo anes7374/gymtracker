@@ -122,6 +122,7 @@ export function buildTabbar() {
   const tabs = [
     ['train', '/', 'dumbbell', 'Training'],
     ['history', '/history', 'history', 'Verlauf'],
+    ['progress', '/progress', 'chart', 'Fortschritt'],
     ['exercises', '/exercises', 'list', 'Übungen'],
     ['settings', '/settings', 'sliders', 'Mehr'],
   ];

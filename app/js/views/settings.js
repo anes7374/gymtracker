@@ -51,6 +51,21 @@ export async function settingsView() {
     toggle('Ton am Ende', 'Nur hörbar, wenn die App geöffnet und das iPhone nicht stumm ist', s.restSound, (v) => repo.setSetting('restSound', v)),
     h('button', { class: 'row-btn', onclick: () => timer.start(10) }, icon('timer'), h('span', null, 'Timer testen (10 s)'))));
 
+  // --- Wochenziel -------------------------------------------------------------------
+  const goalVal = h('span', { class: 'step-val big' }, String(s.weeklyGoal));
+  const setGoal = async (delta) => {
+    const g = Math.max(1, Math.min(7, (await repo.settings()).weeklyGoal + delta));
+    await repo.setSetting('weeklyGoal', g);
+    goalVal.textContent = String(g);
+  };
+  body.append(section('Wochenziel',
+    h('div', { class: 'setting-block' },
+      h('div', { class: 'stepper wide' },
+        h('button', { class: 'step', 'aria-label': 'Ein Training weniger', onclick: () => setGoal(-1) }, '−'),
+        h('div', { class: 'goal-val' }, goalVal, h('span', { class: 'muted small' }, 'Trainings pro Woche')),
+        h('button', { class: 'step', 'aria-label': 'Ein Training mehr', onclick: () => setGoal(1) }, '+')),
+      h('p', { class: 'muted small', style: { margin: 0 } }, 'Für Wochen-Serie, Kalender und Startseite.'))));
+
   // --- Darstellung ------------------------------------------------------------------
   const seg = h('div', { class: 'segmented' });
   const renderSeg = (cur) => {

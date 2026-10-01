@@ -146,3 +146,124 @@ export function lineChart(points, { format = String, axisFormat = format, label 
   ro.observe(wrap);
   return wrap;
 }
+
+/**
+ * Säulendiagramm (z. B. Trainings pro Woche). points: [{x, y}].
+ * goal: optionale Ziellinie; tip(p): Text für den Tooltip-Titel; xLabel(p): Achsenbeschriftung.
+ */
+export function barChart(points, { format = String, tipValue = format, tip = (p) => fmtDateShort(p.x), xLabel = (p) => fmtDateTiny(p.x), goal = null, label = '', integer = false } = {}) {
+  const wrap = h('div', { class: 'chart bars', role: 'img', 'aria-label': label });
+  const tipEl = h('div', { class: 'chart-tip', hidden: true });
+  wrap.append(tipEl);
+  const HEIGHT = 180;
+  let svg = null;
+  let width = 0;
+
+  const draw = () => {
+    const w = Math.round(wrap.clientWidth);
+    if (!w || w === width) return;
+    width = w;
+    svg?.remove();
+    svg = render(w);
+    wrap.prepend(svg);
+  };
+
+  function render(W) {
+    const pad = { top: 14, right: 6, bottom: 24, left: 30 };
+    const iw = W - pad.left - pad.right;
+    const ih = HEIGHT - pad.top - pad.bottom;
+    const root = s('svg', { viewBox: `0 0 ${W} ${HEIGHT}`, width: W, height: HEIGHT, class: 'chart-svg' });
+    const maxY = Math.max(goal || 0, ...points.map((p) => p.y), integer ? 1 : 0.001);
+    let ticks = niceTicks(0, maxY, 3);
+    if (integer) ticks = ticks.filter((t) => Number.isInteger(t));
+    const top = ticks[ticks.length - 1];
+    const Y = (v) => pad.top + ih - (v / top) * ih;
+
+    const grid = s('g', { class: 'chart-grid' });
+    for (const t of ticks) {
+      grid.append(s('line', { x1: pad.left, x2: W - pad.right, y1: Y(t), y2: Y(t) }));
+      const txt = s('text', { x: pad.left - 6, y: Y(t) + 4, 'text-anchor': 'end', class: 'chart-axis' });
+      txt.textContent = format(t);
+      grid.append(txt);
+    }
+    root.append(grid);
+
+    const slot = iw / points.length;
+    const bw = Math.max(2, Math.min(24, slot - 2)); // 2px Abstand zwischen Säulen
+    const bars = points.map((p, i) => {
+      const x = pad.left + i * slot + (slot - bw) / 2;
+      const y = Y(p.y);
+      const hgt = pad.top + ih - y;
+      if (!(p.y > 0)) return null;
+      const r = Math.min(4, bw / 2, hgt);
+      const d = `M${x},${pad.top + ih}V${y + r}Q${x},${y} ${x + r},${y}H${x + bw - r}Q${x + bw},${y} ${x + bw},${y + r}V${pad.top + ih}Z`;
+      const el = s('path', { d, class: 'chart-bar' + (goal != null && p.y >= goal ? ' met' : '') });
+      root.append(el);
+      return el;
+    });
+
+    if (goal != null) {
+      const gy = Y(goal);
+      root.append(s('line', { x1: pad.left, x2: W - pad.right, y1: gy, y2: gy, class: 'chart-goal' }));
+      const gt = s('text', { x: W - pad.right, y: gy - 5, 'text-anchor': 'end', class: 'chart-goal-label' });
+      gt.textContent = 'Ziel';
+      root.append(gt);
+    }
+
+    // x-Achse: bis zu 4 Beschriftungen
+    const labelCount = Math.min(4, points.length);
+    for (let k = 0; k < labelCount; k++) {
+      const i = labelCount === 1 ? 0 : Math.round((k * (points.length - 1)) / (labelCount - 1));
+      const cx = pad.left + i * slot + slot / 2;
+      const anchor = k === 0 ? 'start' : k === labelCount - 1 ? 'end' : 'middle';
+      const t = s('text', { x: k === 0 ? pad.left : k === labelCount - 1 ? W - pad.right : cx, y: HEIGHT - 6, 'text-anchor': anchor, class: 'chart-axis' });
+      t.textContent = xLabel(points[i]);
+      root.append(t);
+    }
+
+    const hit = s('rect', { x: 0, y: 0, width: W, height: HEIGHT, fill: 'transparent' });
+    root.append(hit);
+    let hot = -1;
+    const show = (clientX) => {
+      const px = clientX - root.getBoundingClientRect().left;
+      const i = Math.max(0, Math.min(points.length - 1, Math.floor((px - pad.left) / slot)));
+      if (hot !== -1) bars[hot]?.classList.remove('hot');
+      hot = i;
+      bars[i]?.classList.add('hot');
+      tipEl.hidden = false;
+      tipEl.replaceChildren(h('strong', null, tipValue(points[i].y)), h('span', null, tip(points[i])));
+      const tw = tipEl.offsetWidth;
+      const cx = pad.left + i * slot + slot / 2;
+      tipEl.style.left = Math.max(0, Math.min(W - tw, cx - tw / 2)) + 'px';
+      tipEl.style.top = Math.max(0, Y(points[i].y) - 54) + 'px';
+    };
+    hit.addEventListener('pointerdown', (e) => show(e.clientX));
+    hit.addEventListener('pointermove', (e) => show(e.clientX));
+    hit.addEventListener('pointerleave', (e) => {
+      if (e.pointerType !== 'mouse') return;
+      tipEl.hidden = true;
+      if (hot !== -1) bars[hot]?.classList.remove('hot');
+    });
+    return root;
+  }
+
+  new ResizeObserver(draw).observe(wrap);
+  return wrap;
+}
+
+/** Mini-Verlaufslinie ohne Achsen (für Listen). */
+export function sparkline(values, { width = 84, height = 30 } = {}) {
+  const root = s('svg', { viewBox: `0 0 ${width} ${height}`, width, height, class: 'sparkline', 'aria-hidden': 'true' });
+  if (values.length < 2) return root;
+  const min = Math.min(...values), max = Math.max(...values);
+  const span = max - min || 1;
+  const P = 4;
+  const pts = values.map((v, i) => [
+    P + (i / (values.length - 1)) * (width - 2 * P),
+    height - P - ((v - min) / span) * (height - 2 * P),
+  ]);
+  root.append(s('path', { d: pts.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`).join(''), class: 'spark-line' }));
+  const [lx, ly] = pts[pts.length - 1];
+  root.append(s('circle', { cx: lx, cy: ly, r: 3, class: 'spark-dot' }));
+  return root;
+}

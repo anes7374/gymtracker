@@ -10,6 +10,7 @@ export const DEFAULT_SETTINGS = {
   restAuto: true,     // Timer nach abgehaktem Satz automatisch starten
   restSound: true,    // Ton am Ende der Pause
   theme: 'dark',      // 'dark' | 'light' | 'system'
+  weeklyGoal: 3,      // Ziel: Trainings pro Woche
 };
 
 export const BUILTIN_IDS = new Set(BUILTIN_EXERCISES.map((e) => e.id));

@@ -10,21 +10,24 @@ import { h, clear, toast } from './ui/dom.js';
 import { icon } from './ui/icons.js';
 import { fmtClock } from './lib/format.js';
 import { homeView } from './views/home.js';
-import { activeWorkoutView, editWorkoutView } from './views/workout.js';
+import { activeWorkoutView, editWorkoutView, addWorkoutView } from './views/workout.js';
 import { templateView } from './views/template.js';
 import { historyView, workoutDetailView } from './views/history.js';
 import { exercisesView, exerciseDetailView } from './views/exercises.js';
 import { settingsView } from './views/settings.js';
+import { progressView } from './views/progress.js';
 
 route(/^\/$/, homeView);
 route(/^\/workout$/, activeWorkoutView);
 route(/^\/template\/([\w-]+)$/, templateView);
 route(/^\/history$/, historyView);
+route(/^\/history\/add\/(\d{4}-\d{2}-\d{2})$/, addWorkoutView);
 route(/^\/history\/([\w-]+)$/, workoutDetailView);
 route(/^\/history\/([\w-]+)\/edit$/, editWorkoutView);
 route(/^\/exercises$/, exercisesView);
 route(/^\/exercises\/([\w-]+)$/, exerciseDetailView);
 route(/^\/settings$/, settingsView);
+route(/^\/progress$/, progressView);
 
 async function boot() {
   try {
