@@ -2,7 +2,7 @@
 
 import { h, clear, toast } from '../ui/dom.js';
 import { icon } from '../ui/icons.js';
-import { actionSheet, confirmDialog } from '../ui/sheets.js';
+import { actionSheet, confirmDialog, alertDialog } from '../ui/sheets.js';
 import { pickExercises, exerciseForm } from '../ui/picker.js';
 import { lineChart } from '../ui/chart.js';
 import { navigate, back, refresh } from '../router.js';
@@ -234,10 +234,10 @@ async function customMenu(ex) {
   } else if (choice === 'delete') {
     const u = await repo.exerciseUsage(ex.id);
     if (u.workouts || u.templates) {
-      await confirmDialog({
+      await alertDialog({
         title: 'Übung wird verwendet',
-        message: `„${ex.name}“ kommt in ${u.workouts} Trainings und ${u.templates} Vorlagen vor. Entferne sie dort zuerst – oder nutze „Zusammenführen“, um den Verlauf zu behalten.`,
-        confirmLabel: 'Verstanden', cancelLabel: 'Schließen',
+        message: `„${ex.name}“ kommt in ${count(u.workouts, 'Training', 'Trainings')} und ${count(u.templates, 'Vorlage', 'Vorlagen')} vor. Entferne sie dort zuerst – oder nutze „Zusammenführen“, um den Verlauf zu behalten.`,
+        confirmLabel: 'Verstanden',
       });
       return;
     }

@@ -116,6 +116,55 @@ test('parseStrongCSV: altes Format mit lbs, Semikolon und Dezimalkomma', () => {
   assert.deepEqual(w.exercises[1].sets[0], { weight: null, reps: 12 }); // Körpergewicht
 });
 
+// Export der deutschen Strong-App: übersetzte Spaltennamen, "Ruhezeit"-Zeilen, keine Einheit
+const GERMAN_FORMAT = [
+  'Datum,Workout-Name,Dauer,Name der Übung,Reihenfolge festlegen,Gewicht,Wiederh.,Entfernung,Sekunden,Notizen,Workout-Notizen,RPE',
+  '2025-08-23 17:51:23,"Ganzkörper",2h 23min,"Chest Press (Machine)",1,50.0,12.0,0,0.0,"","Erstes Training",',
+  '2025-08-23 17:51:23,"Ganzkörper",2h 23min,"Chest Press (Machine)",Ruhezeit,0,0.0,0,120.0,,,',
+  '2025-08-23 17:51:23,"Ganzkörper",2h 23min,"Chest Press (Machine)",2,55.0,10.0,0,0.0,,,8',
+  '2025-08-23 17:51:23,"Ganzkörper",2h 23min,"Push Up",1,0,15.0,0,0.0,"",,',
+  '2026-09-30 20:37:54,"Push ",13min,"Hammer Curl (Cable)",1,17.5,8.0,0,0.0,"",,',
+].join('\n');
+
+test('parseStrongCSV: deutscher Strong-Export', () => {
+  const r = parseStrongCSV(GERMAN_FORMAT);
+  assert.equal(r.columns.exerciseName, 'Name der Übung');
+  assert.equal(r.columns.setOrder, 'Reihenfolge festlegen');
+  assert.equal(r.columns.reps, 'Wiederh.');
+  assert.equal(r.columns.workoutNotes, 'Workout-Notizen');
+  assert.equal(r.workouts.length, 2);
+  assert.equal(r.stats.sets, 4);
+  assert.equal(r.stats.skippedRest, 1);
+  assert.equal(r.stats.unitKnown, false);
+  const [w1, w2] = r.workouts;
+  assert.equal(w1.name, 'Ganzkörper');
+  assert.equal(w1.notes, 'Erstes Training');
+  assert.equal(w1.endedAt - w1.startedAt, (2 * 60 + 23) * 60000);
+  assert.deepEqual(w1.exercises[0].sets, [{ weight: 50, reps: 12 }, { weight: 55, reps: 10, rpe: 8 }]);
+  assert.deepEqual(w1.exercises[1].sets, [{ weight: null, reps: 15 }]);
+  assert.equal(w2.name, 'Push'); // Leerzeichen am Ende entfernt
+  assert.equal(w2.endedAt - w2.startedAt, 13 * 60000);
+});
+
+test('planStrongImport: manuelle Zuordnung aus der Vorschau', () => {
+  const parsed = parseStrongCSV(GERMAN_FORMAT);
+  const auto = planStrongImport(parsed, { exercises: BUILTIN_EXERCISES, workouts: [] });
+  const byFrom = (plan) => Object.fromEntries(plan.mapping.map((m) => [m.from, m]));
+  assert.equal(byFrom(auto)['Hammer Curl (Cable)'].id, 'b-hammercurls-kabel');
+  assert.equal(byFrom(auto)['Chest Press (Machine)'].id, 'b-brustpresse');
+
+  const manual = planStrongImport(parsed, { exercises: BUILTIN_EXERCISES, workouts: [] }, {
+    overrides: { 'Chest Press (Machine)': 'b-bankdruecken-mp', 'Push Up': 'new' },
+  });
+  const m = byFrom(manual);
+  assert.equal(m['Chest Press (Machine)'].id, 'b-bankdruecken-mp');
+  assert.equal(m['Chest Press (Machine)'].status, 'manual');
+  assert.equal(m['Push Up'].status, 'new'); // eigene Übung statt "Liegestütze"
+  assert.equal(m['Push Up'].to, 'Push Up');
+  assert.equal(manual.newExercises.length, 1);
+  assert.equal(manual.workouts[0].exercises[0].exerciseId, 'b-bankdruecken-mp');
+});
+
 test('parseStrongCSV: Spaltenreihenfolge egal, Einheit im Spaltennamen', () => {
   const csv = '﻿Exercise Name,Reps,Weight (lbs),Date\r\nBench Press (Barbell),5,135,2024-02-01 10:00:00\r\n';
   const r = parseStrongCSV(csv);

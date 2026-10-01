@@ -2,7 +2,8 @@
 
 import { h, clear, toast } from '../ui/dom.js';
 import { icon } from '../ui/icons.js';
-import { openSheet, actionSheet, confirmDialog } from '../ui/sheets.js';
+import { openSheet, actionSheet, confirmDialog, alertDialog } from '../ui/sheets.js';
+import { pickExercises } from '../ui/picker.js';
 import { navigate, refresh } from '../router.js';
 import * as repo from '../repo.js';
 import * as active from '../active.js';
@@ -180,7 +181,7 @@ async function handleBackupFile(input) {
   try {
     parsed = parseBackup(await file.text());
   } catch (err) {
-    await confirmDialog({ title: 'Import nicht möglich', message: err.message, confirmLabel: 'OK', cancelLabel: 'Schließen' });
+    await alertDialog({ title: 'Import nicht möglich', message: err.message });
     return;
   }
   const customCount = parsed.exercises.filter((e) => !repo.BUILTIN_IDS.has(e.id)).length;
@@ -207,66 +208,106 @@ async function handleBackupFile(input) {
 
 // --- Strong-Import ------------------------------------------------------------------
 
+const MAP_STATUS = { existing: 'vorhanden', mapped: 'automatisch', manual: 'manuell', new: 'neu' };
+
 async function handleStrongFile(input) {
   const file = input.files?.[0];
   input.value = '';
   if (!file) return;
-  let parsed, plan;
+  let parsed;
   try {
     parsed = parseStrongCSV(await file.text());
-    plan = planStrongImport(parsed, { exercises: await repo.exercises(), workouts: await repo.workouts() });
   } catch (err) {
-    await confirmDialog({ title: 'Import nicht möglich', message: err.message, confirmLabel: 'OK', cancelLabel: 'Schließen' });
+    await alertDialog({ title: 'Import nicht möglich', message: err.message });
     return;
   }
 
   const st = parsed.stats;
-  const counts = { existing: 0, mapped: 0, new: 0 };
-  for (const m of plan.mapping) counts[m.status]++;
-  const skipped = [
-    st.skippedRest ? `${st.skippedRest} Pausentimer-Zeilen` : null,
-    st.skippedEmpty ? `${st.skippedEmpty} leere Zeilen` : null,
-    st.skippedInvalid ? `${st.skippedInvalid} unlesbare Zeilen` : null,
-  ].filter(Boolean);
+  const overrides = {}; // manuelle Zuordnungen aus der Vorschau
+  let plan;
+  let importing = false;
+  const content = h('div', { class: 'form' });
+  const importBtn = h('button', { class: 'btn primary', onclick: doImport });
 
-  const STATUS = { existing: 'vorhanden', mapped: 'zugeordnet', new: 'neu' };
-  const mappingList = h('div', { class: 'map-list' }, plan.mapping.map((m) =>
-    h('div', { class: 'map-row' },
-      h('div', { class: 'map-names' },
-        h('span', null, m.from),
-        m.from !== m.to ? h('span', { class: 'muted small' }, '→ ' + m.to) : null),
-      h('span', { class: 'tag ' + m.status }, STATUS[m.status]))));
+  async function replan() {
+    plan = planStrongImport(parsed, { exercises: await repo.exercises(), workouts: await repo.workouts() }, { overrides });
+    render();
+  }
 
-  const s = openSheet({
-    title: 'Strong-Import',
-    full: true,
-    body: h('div', { class: 'form' },
+  function render() {
+    const counts = { existing: 0, mapped: 0, manual: 0, new: 0 };
+    for (const m of plan.mapping) counts[m.status]++;
+    const skipped = [
+      st.skippedRest ? `${fmtNum(st.skippedRest, 0)} Pausen-Zeilen` : null,
+      st.skippedEmpty ? `${fmtNum(st.skippedEmpty, 0)} leere Zeilen` : null,
+      st.skippedInvalid ? `${fmtNum(st.skippedInvalid, 0)} unlesbare Zeilen` : null,
+    ].filter(Boolean);
+
+    clear(content).append(
       h('div', { class: 'stat-row wrap' },
         statBox('Trainings', plan.workouts.length),
         statBox('Sätze', plan.setCount),
         statBox('Übungen', plan.mapping.length)),
       h('ul', { class: 'import-facts' },
-        h('li', null, `${parsed.workouts.length} Trainings erkannt` + (st.from ? ` (${fmtDateShort(st.from)} – ${fmtDateShort(st.to)})` : '')),
+        h('li', null, `${count(parsed.workouts.length, 'Training', 'Trainings')} erkannt` + (st.from ? ` (${fmtDateShort(st.from)} – ${fmtDateShort(st.to)})` : '')),
         plan.duplicates ? h('li', null, `${plan.duplicates} bereits vorhanden – werden übersprungen`) : null,
-        h('li', null, `Übungen: ${counts.existing + counts.mapped} zugeordnet, ${counts.new} werden neu angelegt`),
+        h('li', null, `Übungen: ${counts.existing + counts.mapped + counts.manual} zugeordnet, ${counts.new} werden neu angelegt`),
         st.convertedLbs ? h('li', null, 'Gewichte in lbs wurden in kg umgerechnet') : null,
+        !st.unitKnown ? h('li', null, 'Die Datei nennt keine Gewichtseinheit – Werte werden als kg übernommen.') : null,
         skipped.length ? h('li', { class: 'muted' }, 'Übersprungen: ' + skipped.join(', ')) : null),
       h('h3', { class: 'section-title' }, 'Zuordnung der Übungen'),
-      h('p', { class: 'muted small' }, 'Neu angelegte Übungen kannst du später unter „Übungen“ umbenennen oder mit einer vorhandenen zusammenführen.'),
-      mappingList),
-    footer: [
-      h('button', { class: 'btn secondary', onclick: () => s.close() }, 'Abbrechen'),
-      h('button', {
-        class: 'btn primary', disabled: !plan.workouts.length,
-        onclick: async (e) => {
-          e.currentTarget.disabled = true;
-          await repo.importStrong(plan);
-          s.close();
-          toast(`${count(plan.workouts.length, 'Training', 'Trainings')} importiert ✓`);
-          navigate('/history');
-        },
-      }, plan.workouts.length ? `${count(plan.workouts.length, 'Training', 'Trainings')} importieren` : 'Nichts Neues'),
-    ],
+      h('p', { class: 'muted small' }, 'Tippe auf eine Übung, um die Zuordnung zu ändern. „Neu“ wird als eigene Übung mit dem Strong-Namen angelegt.'),
+      h('div', { class: 'map-list' }, plan.mapping.map((m) =>
+        h('button', { class: 'map-row', onclick: () => editMapping(m) },
+          h('div', { class: 'map-names' },
+            h('span', null, m.from),
+            m.from !== m.to ? h('span', { class: 'muted small' }, '→ ' + m.to) : null,
+            h('span', { class: 'muted small' }, count(m.sets, 'Satz', 'Sätze'))),
+          h('span', { class: 'tag ' + m.status }, MAP_STATUS[m.status]),
+          icon('chevron', { size: 18, cls: 'muted' })))));
+
+    importBtn.disabled = importing || !plan.workouts.length;
+    importBtn.textContent = plan.workouts.length ? `Importieren (${fmtNum(plan.workouts.length, 0)})` : 'Nichts Neues';
+  }
+
+  async function editMapping(m) {
+    const choice = await actionSheet({
+      title: m.from,
+      message: `Wird importiert als: ${m.to}`,
+      items: [
+        { label: 'Andere Übung wählen …', value: 'pick', icon: 'search' },
+        m.status === 'mapped' || m.status === 'manual'
+          ? { label: `Als eigene Übung „${m.from}“ anlegen`, value: 'new', icon: 'plus' } : null,
+        overrides[m.from] ? { label: 'Automatische Zuordnung', value: 'auto', icon: 'restart' } : null,
+      ],
+    });
+    if (choice === 'pick') {
+      const [id] = await pickExercises({ title: `„${m.from}“ zuordnen`, multi: false });
+      if (!id) return;
+      overrides[m.from] = id;
+    } else if (choice === 'new') {
+      overrides[m.from] = 'new';
+    } else if (choice === 'auto') {
+      delete overrides[m.from];
+    } else return;
+    await replan();
+  }
+
+  async function doImport() {
+    importing = true;
+    importBtn.disabled = true;
+    await repo.importStrong(plan);
+    s.close();
+    toast(`${count(plan.workouts.length, 'Training', 'Trainings')} importiert ✓`);
+    navigate('/history');
+  }
+
+  await replan();
+  const s = openSheet({
+    title: 'Strong-Import',
+    full: true,
+    body: content,
+    footer: [h('button', { class: 'btn secondary', onclick: () => s.close() }, 'Abbrechen'), importBtn],
   });
 }
 

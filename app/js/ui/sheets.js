@@ -77,6 +77,18 @@ export function confirmDialog({ title, message, confirmLabel = 'OK', cancelLabel
   });
 }
 
+/** Hinweis mit nur einem Knopf -> Promise<void> */
+export function alertDialog({ title, message, confirmLabel = 'OK' }) {
+  return new Promise((resolve) => {
+    const s = openSheet({
+      title,
+      body: message ? h('p', { class: 'sheet-message' }, message) : null,
+      footer: [h('button', { class: 'btn primary', onclick: () => s.close() }, confirmLabel)],
+      onClose: () => resolve(),
+    });
+  });
+}
+
 /** Texteingabe -> Promise<string|null> */
 export function promptDialog({ title, label, value = '', placeholder = '', confirmLabel = 'Speichern' }) {
   return new Promise((resolve) => {

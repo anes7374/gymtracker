@@ -1,7 +1,8 @@
 // Import der CSV-Exportdatei der App "Strong".
-// Robust gegenüber verschiedenen Strong-Versionen: Spalten werden über ihre
-// Namen erkannt (nicht über Positionen), Trennzeichen (, ; Tab) automatisch
-// bestimmt, lbs werden in kg umgerechnet, Pausentimer-Zeilen übersprungen.
+// Robust gegenüber verschiedenen Strong-Versionen und -Sprachen: Spalten werden
+// über ihre Namen erkannt (Englisch und Deutsch, nicht über Positionen),
+// Trennzeichen (, ; Tab) automatisch bestimmt, lbs in kg umgerechnet,
+// Pausentimer-Zeilen ("Rest Timer" / "Ruhezeit") übersprungen.
 
 import { parseNumber, round } from './format.js';
 import { normalizeExerciseName, STRONG_NAME_MAP } from './exercises-data.js';
@@ -58,25 +59,33 @@ export function parseCSV(text, delimiter = detectDelimiter(text)) {
 }
 
 function normHeader(h) {
-  return String(h || '').replace(/^﻿/, '').replace(/"/g, '').trim().toLowerCase().replace(/\s+/g, ' ');
+  return String(h || '')
+    .replace(/^﻿/, '')
+    .replace(/"/g, '')
+    .toLowerCase()
+    .replace(/[-_]/g, ' ') // "Workout-Name" -> "workout name"
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 // Reihenfolge ist wichtig: spezifischere Spalten (z. B. "Weight Unit") zuerst.
+// Deutsche Namen stammen aus dem Export der deutschen Strong-App
+// (z. B. "Reihenfolge festlegen" = "Set Order", "Wiederh." = "Reps").
 const COLUMN_RULES = [
-  ['workoutNo', (h) => /^workout ?(#|nr\.?|no\.?|number|id)$/.test(h)],
+  ['workoutNo', (h) => /^(workout|training) ?(#|nr\.?|no\.?|number|nummer|id)$/.test(h)],
   ['date', (h) => /^(date|datum)\b/.test(h)],
   ['workoutName', (h) => /^(workout name|workout|training|trainingsname|routine)$/.test(h)],
   ['workoutDuration', (h) => /^(workout )?(duration|dauer)\b/.test(h)],
-  ['exerciseName', (h) => /^(exercise name|exercise|übung|uebung|übungsname)$/.test(h)],
-  ['setOrder', (h) => /^(set order|set|set #|set number|satz|satznummer)$/.test(h)],
+  ['exerciseName', (h) => /^(exercise name|exercise|übung|uebung|übungsname|name der übung)$/.test(h)],
+  ['setOrder', (h) => /^(set order|set|set #|set number|satz|satznummer|satz nr\.?|reihenfolge festlegen|satzreihenfolge|reihenfolge)$/.test(h)],
   ['weightUnit', (h) => /^(weight unit|gewichtseinheit|einheit)$/.test(h)],
   ['weight', (h) => /^(weight|gewicht)\b/.test(h)],
-  ['reps', (h) => /^(reps|repetitions|wiederholungen|wdh)\b/.test(h)],
+  ['reps', (h) => /^(reps|repetitions|wiederholungen|wiederh|wdh)\b/.test(h)],
   ['rpe', (h) => /^rpe\b/.test(h)],
-  ['distanceUnit', (h) => /^(distance unit|distanzeinheit)$/.test(h)],
-  ['distance', (h) => /^(distance|distanz|strecke)\b/.test(h)],
+  ['distanceUnit', (h) => /^(distance unit|distanzeinheit|entfernungseinheit)$/.test(h)],
+  ['distance', (h) => /^(distance|distanz|strecke|entfernung)\b/.test(h)],
   ['seconds', (h) => /^(seconds|sekunden|time|zeit)\b/.test(h)],
-  ['workoutNotes', (h) => /^(workout notes?|trainingsnotiz(en)?)$/.test(h)],
+  ['workoutNotes', (h) => /^(workout notes?|workout notiz(en)?|trainingsnotiz(en)?)$/.test(h)],
   ['notes', (h) => /^(notes?|notiz(en)?)$/.test(h)],
 ];
 
@@ -174,10 +183,10 @@ export function parseSetOrder(value) {
   const s = String(value ?? '').trim();
   if (!s || /^\d+$/.test(s)) return { type: 'normal' };
   const u = s.toUpperCase();
-  if (u === 'W' || /warm/i.test(s)) return { type: 'warmup' };
+  if (u === 'W' || /warm|aufw/i.test(s)) return { type: 'warmup' };
   if (u === 'D' || /drop/i.test(s)) return { type: 'drop' };
-  if (u === 'F' || /fail/i.test(s)) return { type: 'failure' };
-  if (/rest|pause|timer/i.test(s)) return { skip: 'rest' };
+  if (u === 'F' || /fail|versagen/i.test(s)) return { type: 'failure' };
+  if (/rest|pause|timer|ruhe/i.test(s)) return { skip: 'rest' }; // "Rest Timer" / "Ruhezeit"
   return { skip: 'other' };
 }
 
@@ -212,7 +221,11 @@ export function parseStrongCSV(text) {
   const distanceHeaderUnit = cols.distance != null ? unitHint(header[cols.distance]) : '';
   const durationHint = cols.workoutDuration != null ? header[cols.workoutDuration] : '';
 
-  const stats = { rows: rows.length - 1, sets: 0, skippedRest: 0, skippedEmpty: 0, skippedInvalid: 0, convertedLbs: false, from: null, to: null };
+  const stats = {
+    rows: rows.length - 1, sets: 0, skippedRest: 0, skippedEmpty: 0, skippedInvalid: 0, convertedLbs: false, from: null, to: null,
+    // Ohne Einheitsangabe (z. B. deutscher Export) wird kg angenommen.
+    unitKnown: cols.weightUnit != null || !!weightHeaderUnit,
+  };
   const byKey = new Map();
   const exerciseCounts = new Map();
 
@@ -297,8 +310,11 @@ export function parseStrongCSV(text) {
  * (gleicher Name → vorhandene Übung, bekannter Strong-Name → eingebaute Übung,
  * sonst neue eigene Übung) und überspringt bereits importierte Trainings
  * (gleiche Startzeit ±1 Minute).
+ *
+ * overrides: { "Strong-Name": exerciseId | 'new' } – manuelle Zuordnung aus der
+ * Vorschau. 'new' = als eigene Übung mit dem Originalnamen anlegen.
  */
-export function planStrongImport(parsed, existing, { makeId = uid, now = Date.now() } = {}) {
+export function planStrongImport(parsed, existing, { makeId = uid, now = Date.now(), overrides = {} } = {}) {
   const exercises = existing.exercises || [];
   const byName = new Map(exercises.map((e) => [normalizeExerciseName(e.name), e]));
   const byId = new Map(exercises.map((e) => [e.id, e]));
@@ -308,9 +324,11 @@ export function planStrongImport(parsed, existing, { makeId = uid, now = Date.no
 
   for (const { name, sets } of parsed.exercises) {
     const n = normalizeExerciseName(name);
-    let target = byName.get(n);
-    let status = 'existing';
-    if (!target) {
+    const manual = overrides[name];
+    let target = manual && manual !== 'new' ? byId.get(manual) : null;
+    let status = target ? 'manual' : 'existing';
+    if (!target) target = byName.get(n);
+    if (!target && manual !== 'new') {
       const mappedId = STRONG_NAME_MAP.get(n);
       target = mappedId ? byId.get(mappedId) : null;
       status = 'mapped';
