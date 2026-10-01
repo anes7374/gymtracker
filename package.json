@@ -1,0 +1,15 @@
+{
+  "name": "gymtracker",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Offline-fähige Gym-Tracking-PWA (Vanilla JS, ohne Build-Schritt)",
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "start": "node tools/serve.mjs",
+    "icons": "node tools/make-icons.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

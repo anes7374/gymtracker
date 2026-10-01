@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "gymtracker",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["tools/serve.mjs"],
+      "port": 5173
+    },
+    {
+      "name": "gymtracker-dist",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["tools/serve.mjs", "dist", "5174"],
+      "port": 5174
+    }
+  ]
+}

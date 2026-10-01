@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="de" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>GymTracker</title>
+  <meta name="description" content="Workouts loggen und Fortschritt sehen – offline, ohne Account.">
+
+  <!-- PWA / iOS -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#0e1013">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="GymTracker">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="format-detection" content="telephone=no">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+
+  <script>
+    // Farbschema vor dem ersten Zeichnen setzen (kein heller Blitz).
+    try {
+      var t = localStorage.getItem('gt-theme') || 'dark';
+      if (t === 'system') t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+      document.documentElement.dataset.theme = t;
+    } catch (e) {}
+  </script>
+  <link rel="stylesheet" href="css/app.css">
+  <script type="module" src="js/main.js"></script>
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div class="topbar-inner">
+        <div class="topbar-left"></div>
+        <h1 class="topbar-title">GymTracker</h1>
+        <div class="topbar-right"></div>
+      </div>
+    </header>
+    <main id="view" class="view" tabindex="-1">
+      <div class="boot">Lädt …</div>
+    </main>
+    <div id="rest-root" hidden></div>
+    <div id="active-root" hidden></div>
+    <nav id="tabbar" class="tabbar" aria-label="Hauptnavigation"></nav>
+  </div>
+  <div id="sheet-root"></div>
+  <div id="toast-root" aria-live="polite"></div>
+  <div id="update-root"></div>
+  <div class="rotate-hint" aria-hidden="true">Bitte das iPhone ins Hochformat drehen</div>
+  <noscript>Diese App benötigt JavaScript.</noscript>
+</body>
+</html>
