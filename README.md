@@ -9,6 +9,8 @@ Läuft komplett offline, ohne Account und ohne Server. Alle Daten bleiben auf de
 - **Training loggen**: Sätze mit kg × Wiederholungen, Abhaken mit einem Tipp. Pro Übung „Letztes Mal: …“ und eine
   „Vorher“-Spalte (antippen = übernehmen). Leere Felder werden beim Abhaken mit dem Vorschlag (grau) gefüllt.
   Aufwärm-/Dropsätze über die Satznummer markieren.
+  **+/−-Knöpfe** unter dem aktuellen Satz: Wiederholungen in 1er-Schritten, Gewicht im Schritt, der aus dem
+  Verlauf der Übung gelernt wird (z. B. 2,5 kg an der Maschine, 2 kg bei Kurzhanteln) – antippen zum Ändern, halten wiederholt.
 - **Übungen**: ~85 eingebaute Übungen (Deutsch) plus eigene. Eigene Übungen lassen sich umbenennen und mit anderen zusammenführen.
 - **Pausentimer**: startet nach jedem abgehakten Satz, ±15 s, Dauer einstellbar. Zeitstempelbasiert, läuft also nach
   Bildschirmsperre und App-Wechsel korrekt weiter.
@@ -24,6 +26,8 @@ Läuft komplett offline, ohne Account und ohne Server. Alle Daten bleiben auf de
 - **Verlauf** als **Kalender** (Trainingstage, Rekordtage, Trainings pro Woche, Wischen zum Monatswechsel) oder Liste.
   Trainings für vergangene Tage **nachtragen**. Details, bearbeiten, löschen, erneut trainieren, als Vorlage speichern.
 - **Wochenziel** (Einstellungen) für Serie, Kalender und Startseite.
+- **Split teilen**: Trainingstage mit Übungen (optional Satzanzahl, Trainingsfrequenz) als Text für den Coach –
+  ohne Gewichte. Quelle: Vorlagen oder die letzten Trainings; aus dem Verlauf auch als Vorlagen übernehmbar.
 - **Backup**: Export als JSON über das iOS-Teilen-Menü (z. B. in iCloud Drive), Import mit „Zusammenführen“ oder „Ersetzen“.
 - **Import aus Strong**: CSV-Export von Strong einlesen. Spalten werden über Namen erkannt, Vorschau vor dem Import,
   Duplikate werden übersprungen (erneuter Import ist gefahrlos).
@@ -43,7 +47,7 @@ app/                    ← das ist die App (wird 1:1 veröffentlicht)
   js/active.js          laufendes Training (übersteht App-Neustart)
   js/timer.js           Pausentimer
   js/pwa.js             Service Worker, Update-Hinweis, persist()
-  js/lib/               reine Logik (getestet): calc, stats, strong-csv, backup, format, exercises-data
+  js/lib/               reine Logik (getestet): calc, stats, split, strong-csv, backup, format, exercises-data
   js/ui/                DOM-Helfer, Icons, Sheets, Übungsauswahl, Diagramm
   js/views/             Bildschirme
 tests/                  Tests (node --test)

@@ -219,6 +219,7 @@ body.no-tabbar #app { padding-bottom: env(safe-area-inset-bottom); }
 
 .section-head { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }
 .section-head h2 { margin: 0; font-size: 22px; font-weight: 700; }
+.section-actions { display: flex; align-items: center; gap: 2px; }
 .section-title {
   margin: 14px 4px 0; font-size: 14px; font-weight: 700;
   text-transform: uppercase; letter-spacing: .05em; color: var(--text-3);
@@ -812,3 +813,36 @@ button.stat { text-align: left; }
 .month-stats .stat-value { font-size: 16px; }
 .month-stats .stat-label { font-size: 12px; }
 .goal-val { display: flex; flex-direction: column; align-items: center; }
+
+/* ---------- +/−-Knöpfe beim Loggen ---------- */
+
+.set-row.active { box-shadow: inset 0 0 0 2px var(--accent); }
+.set-row.active.done { box-shadow: inset 0 0 0 2px var(--success); }
+.set-stepper {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+  margin: 2px 0 6px; padding: 6px; border-radius: 12px; background: var(--surface-2);
+}
+.stp-group { display: grid; grid-template-columns: 44px 1fr 44px; align-items: center; gap: 4px; }
+.stp-btn {
+  height: 44px; border-radius: 10px; background: var(--surface-3); color: var(--text);
+  font-size: 26px; font-weight: 600; line-height: 1;
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+}
+.stp-btn:active { background: var(--accent); color: #fff; }
+.stp-label {
+  min-height: 44px; display: flex; align-items: center; justify-content: center; gap: 3px;
+  font-size: 14px; font-weight: 700; color: var(--accent-text); white-space: nowrap; border-radius: 10px;
+}
+.stp-label.static { color: var(--text-2); }
+.stp-caret { stroke-width: 3; }
+
+/* ---------- Split teilen ---------- */
+
+.split-content { display: flex; flex-direction: column; gap: 10px; }
+.split-hint { margin: 0 4px; }
+.split-day { display: flex; flex-direction: column; min-width: 0; }
+.split-preview {
+  white-space: pre-wrap; font-size: 15px; line-height: 1.5;
+  user-select: text; -webkit-user-select: text; overflow-wrap: break-word;
+}
+.split-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }

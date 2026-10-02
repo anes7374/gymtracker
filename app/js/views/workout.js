@@ -9,9 +9,11 @@ import * as repo from '../repo.js';
 import * as active from '../active.js';
 import * as timer from '../timer.js';
 import { uid } from '../lib/uid.js';
-import { lastPerformance, bestsForExercise, detectSetPRs, computeAllPRs, PR_LABELS, setMetrics } from '../lib/calc.js';
 import {
-  parseNumber, fmtNum, fmtSet, fmtWeightInput, fmtClock, fmtDateTiny, toDateTimeLocal, fromDateTimeLocal,
+  lastPerformance, bestsForExercise, detectSetPRs, computeAllPRs, PR_LABELS, setMetrics, inferWeightStep, WEIGHT_STEPS,
+} from '../lib/calc.js';
+import {
+  parseNumber, fmtNum, fmtSet, fmtWeightInput, fmtClock, fmtDateTiny, toDateTimeLocal, fromDateTimeLocal, round,
 } from '../lib/format.js';
 
 export async function activeWorkoutView() {
@@ -39,7 +41,7 @@ export async function addWorkoutView(day) {
 
 async function editorView(w, mode, { isNew = false } = {}) {
   const isActive = mode === 'active';
-  const settings = await repo.settings();
+  let settings = await repo.settings();
   const history = (await repo.workouts()).filter((x) => x.id !== w.id);
   const beforeTs = isActive ? Infinity : w.startedAt;
   let dirty = false;
@@ -52,6 +54,7 @@ async function editorView(w, mode, { isNew = false } = {}) {
       infoCache.set(exerciseId, {
         last: lastPerformance(history, exerciseId, { beforeTs }),
         bests: bestsForExercise(history, exerciseId, { beforeTs }),
+        autoStep: inferWeightStep(history, exerciseId),
       });
     }
     return infoCache.get(exerciseId);
@@ -90,13 +93,65 @@ async function editorView(w, mode, { isNew = false } = {}) {
 
   // --- Übungen ----------------------------------------------------------------
   const list = h('div', { class: 'ex-list' });
+  // Der „aktuelle Satz“ bekommt die +/−-Knöpfe. Es gibt genau einen im ganzen
+  // Training; nach dem Abhaken springt er zum nächsten offenen Satz.
+  const cardApis = new Map(); // entry -> Steuerung der Karte
+  let current = null;         // { entry, idx }
+
+  function activate(entry, idx) {
+    if (current && current.entry !== entry) cardApis.get(current.entry)?.deactivate();
+    const api = cardApis.get(entry);
+    if (!api || idx < 0) { current = null; return; }
+    current = { entry, idx };
+    api.activate(idx);
+  }
+
+  /** Nächster offener Satz in dieser Übung, sonst in den folgenden Übungen. */
+  function advanceFrom(entry) {
+    const start = Math.max(0, w.exercises.indexOf(entry));
+    for (let k = 0; k < w.exercises.length; k++) {
+      const e = w.exercises[(start + k) % w.exercises.length];
+      const i = e.sets.findIndex((s) => !s.done);
+      if (i !== -1) { activate(e, i); return; }
+    }
+    if (current) cardApis.get(current.entry)?.deactivate();
+    current = null;
+  }
 
   function renderAll() {
+    const keep = current;
     clear(list);
+    cardApis.clear();
+    current = null;
     if (!w.exercises.length) {
       list.append(h('div', { class: 'empty' }, h('p', null, 'Noch keine Übungen. Füge die erste hinzu.')));
     }
     for (const entry of w.exercises) list.append(makeCard(entry));
+    if (keep && w.exercises.includes(keep.entry) && keep.idx < keep.entry.sets.length) activate(keep.entry, keep.idx);
+    else if (isActive && w.exercises.length) advanceFrom(w.exercises[0]);
+  }
+
+  /** Gewichtsschritt einer Übung: eigene Einstellung, sonst aus dem Verlauf gelernt. */
+  const weightStep = (exerciseId) => settings.weightSteps?.[exerciseId] ?? info(exerciseId).autoStep;
+
+  async function chooseWeightStep(entry) {
+    const id = entry.exerciseId;
+    const cur = weightStep(id);
+    const auto = info(id).autoStep;
+    const manual = settings.weightSteps?.[id] != null;
+    const choice = await actionSheet({
+      title: 'Gewichtsschritt für +/−',
+      message: `${repo.exerciseName(id)} · aus deinem Verlauf: ${fmtNum(auto)} kg`,
+      items: [
+        ...WEIGHT_STEPS.map((v) => ({ label: `${fmtNum(v)} kg${v === cur ? '  ✓' : ''}`, value: v })),
+        manual ? { label: 'Automatisch (aus Verlauf)', value: 'auto', icon: 'restart' } : null,
+      ],
+    });
+    if (choice == null) return;
+    const steps = { ...(settings.weightSteps || {}) };
+    if (choice === 'auto') delete steps[id]; else steps[id] = choice;
+    settings = await repo.setSetting('weightSteps', steps);
+    cardApis.get(entry)?.refreshStepper();
   }
 
   function makeCard(entry) {
@@ -117,9 +172,81 @@ async function editorView(w, mode, { isNew = false } = {}) {
     const prLine = h('div', { class: 'pr-line', hidden: true });
 
     const rerender = () => {
+      const wasIdx = current?.entry === entry ? current.idx : -1;
       const fresh = makeCard(entry);
       card.replaceWith(fresh);
+      if (wasIdx === -1) return;
+      const s = entry.sets[wasIdx];
+      if (s && !s.done) activate(entry, wasIdx);
+      else advanceFrom(entry);
     };
+
+    // +/−-Knöpfe: Antippen = ein Schritt, Halten wiederholt
+    const repeatBtn = (label, aria, fn) => {
+      let t = null, repeated = false;
+      const stop = () => { clearTimeout(t); clearInterval(t); t = null; };
+      return h('button', {
+        class: 'stp-btn', 'aria-label': aria,
+        onpointerdown: () => {
+          repeated = false;
+          stop();
+          t = setTimeout(() => { repeated = true; fn(); t = setInterval(fn, 110); }, 450);
+        },
+        onpointerup: stop, onpointerleave: stop, onpointercancel: stop,
+        onclick: () => { if (!repeated) fn(); repeated = false; },
+        oncontextmenu: (e) => e.preventDefault(),
+      }, label);
+    };
+    let activeIdx = -1;
+    const stepLabel = h('button', { class: 'stp-label', 'aria-label': 'Gewichtsschritt ändern', onclick: () => chooseWeightStep(entry) });
+    const stepper = h('div', { class: 'set-stepper' },
+      h('div', { class: 'stp-group' },
+        repeatBtn('−', 'Gewicht verringern', () => bump('weight', -1)),
+        stepLabel,
+        repeatBtn('+', 'Gewicht erhöhen', () => bump('weight', 1))),
+      h('div', { class: 'stp-group' },
+        repeatBtn('−', 'Eine Wiederholung weniger', () => bump('reps', -1)),
+        h('span', { class: 'stp-label static' }, '1 Wdh.'),
+        repeatBtn('+', 'Eine Wiederholung mehr', () => bump('reps', 1))));
+    const refreshStepper = () => {
+      stepLabel.replaceChildren(`${fmtNum(weightStep(entry.exerciseId))} kg`, icon('down', { size: 14, cls: 'stp-caret' }));
+    };
+
+    function bump(field, dir) {
+      const i = activeIdx;
+      if (i < 0) return;
+      const s = entry.sets[i];
+      const r = rows[i];
+      const ph = placeholders()[i];
+      if (field === 'weight') {
+        const v = round((s.weight ?? ph.weight ?? 0) + dir * weightStep(entry.exerciseId), 2);
+        s.weight = v > 0 ? v : null;
+        r.wIn.value = fmtWeightInput(s.weight);
+        r.wIn.classList.remove('invalid');
+      } else {
+        const v = (s.reps ?? ph.reps ?? 0) + dir;
+        s.reps = v > 0 ? v : null;
+        r.rIn.value = s.reps ?? '';
+        r.rIn.classList.remove('invalid');
+      }
+      changed();
+      refreshStatus();
+    }
+
+    cardApis.set(entry, {
+      activate(i) {
+        activeIdx = i;
+        rows.forEach((r, j) => r.row.classList.toggle('active', j === i));
+        refreshStepper();
+        rows[i].row.after(stepper);
+      },
+      deactivate() {
+        activeIdx = -1;
+        rows.forEach((r) => r.row.classList.remove('active'));
+        stepper.remove();
+      },
+      refreshStepper,
+    });
 
     // Kopf
     card.append(h('div', { class: 'ex-head' },
@@ -182,6 +309,8 @@ async function editorView(w, mode, { isNew = false } = {}) {
         changed(); refreshStatus();
       });
       wIn.addEventListener('blur', () => { if (set.weight != null) wIn.value = fmtWeightInput(set.weight); });
+      wIn.addEventListener('focus', () => activate(entry, i));
+      rIn.addEventListener('focus', () => activate(entry, i));
       rIn.addEventListener('input', () => {
         const n = parseNumber(rIn.value);
         set.reps = n != null && n >= 0 ? Math.round(n) : null;
@@ -259,6 +388,8 @@ async function editorView(w, mode, { isNew = false } = {}) {
       }
       changed();
       const { prs } = refreshStatus();
+      if (s.done) advanceFrom(entry);
+      else activate(entry, i);
       if (s.done && prs[i].length && !before) {
         toast('🏆 Neuer PR: ' + prs[i].map((t) => PR_LABELS[t]).join(', '), { kind: 'pr' });
       }

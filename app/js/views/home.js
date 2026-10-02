@@ -69,11 +69,16 @@ export async function homeView() {
 
   body.append(h('div', { class: 'section-head' },
     h('h2', null, 'Vorlagen'),
-    h('button', { class: 'text-btn', onclick: () => navigate('/template/new') }, icon('plus', { size: 20 }), 'Neue Vorlage')));
+    h('div', { class: 'section-actions' },
+      h('button', { class: 'icon-btn', 'aria-label': 'Split teilen (z. B. mit deinem Coach)', onclick: () => navigate('/split') }, icon('share', { size: 22 })),
+      h('button', { class: 'text-btn', onclick: () => navigate('/template/new') }, icon('plus', { size: 20 }), 'Neu'))));
 
   if (!templates.length) {
     body.append(h('div', { class: 'empty' },
-      h('p', null, 'Noch keine Vorlagen. Lege eigene an – oder starte mit Beispielen für Push / Pull / Beine / Oberkörper.'),
+      h('p', null, 'Noch keine Vorlagen. Übernimm deinen Split aus dem Verlauf, lege eigene an – oder starte mit Beispielen.'),
+      workouts.length
+        ? h('button', { class: 'btn primary', onclick: () => navigate('/split') }, 'Aus meinem Verlauf übernehmen')
+        : null,
       h('button', { class: 'btn secondary', onclick: createSamples }, 'Beispielvorlagen anlegen')));
   }
 

@@ -11,6 +11,7 @@ export const DEFAULT_SETTINGS = {
   restSound: true,    // Ton am Ende der Pause
   theme: 'dark',      // 'dark' | 'light' | 'system'
   weeklyGoal: 3,      // Ziel: Trainings pro Woche
+  weightSteps: {},    // eigener Gewichtsschritt je Übung für +/− (sonst aus dem Verlauf)
 };
 
 export const BUILTIN_IDS = new Set(BUILTIN_EXERCISES.map((e) => e.id));

@@ -16,6 +16,7 @@ import { historyView, workoutDetailView } from './views/history.js';
 import { exercisesView, exerciseDetailView } from './views/exercises.js';
 import { settingsView } from './views/settings.js';
 import { progressView } from './views/progress.js';
+import { splitView } from './views/split.js';
 
 route(/^\/$/, homeView);
 route(/^\/workout$/, activeWorkoutView);
@@ -28,6 +29,7 @@ route(/^\/exercises$/, exercisesView);
 route(/^\/exercises\/([\w-]+)$/, exerciseDetailView);
 route(/^\/settings$/, settingsView);
 route(/^\/progress$/, progressView);
+route(/^\/split$/, splitView);
 
 async function boot() {
   try {

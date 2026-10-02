@@ -92,6 +92,9 @@ export async function settingsView() {
     h('button', { class: 'row-btn', onclick: () => backupInput.click() }, icon('import'), h('span', null, 'Backup importieren'), icon('chevron', { size: 20, cls: 'muted' })),
     backupInput));
 
+  body.append(section('Trainingsplan',
+    h('button', { class: 'row-btn', onclick: () => navigate('/split') }, icon('share'), h('span', null, 'Split teilen (z. B. mit Coach)'), icon('chevron', { size: 20, cls: 'muted' }))));
+
   body.append(section('Aus Strong übernehmen',
     h('p', { class: 'muted small pad' }, 'In Strong: Profil → Einstellungen → „Export Strong Data“ → Datei in „Dateien“ sichern. Dann hier die CSV-Datei auswählen.'),
     h('button', { class: 'row-btn', onclick: () => strongInput.click() }, icon('import'), h('span', null, 'Strong-CSV importieren'), icon('chevron', { size: 20, cls: 'muted' })),

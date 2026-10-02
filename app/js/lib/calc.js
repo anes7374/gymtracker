@@ -237,3 +237,32 @@ export function weekSummary(workouts, now = Date.now()) {
     volume: inWeek.reduce((sum, w) => sum + workoutVolume(w), 0),
   };
 }
+
+// --- Gewichtsschritt für die +/−-Knöpfe ----------------------------------------
+
+export const WEIGHT_STEPS = [0.5, 1, 1.25, 2, 2.5, 5];
+
+/**
+ * Leitet den üblichen Gewichtsschritt einer Übung aus dem Verlauf ab:
+ * Abstände zwischen verschiedenen Gewichten in einem Training und Sprünge des
+ * schwersten Satzes von Training zu Training. Häufigster typischer Schritt
+ * gewinnt (bei Gleichstand der größere). Mindestens 2 Belege, sonst `fallback`.
+ */
+export function inferWeightStep(workouts, exerciseId, fallback = 2.5) {
+  const counts = new Map();
+  const add = (d) => {
+    d = Math.round(d * 100) / 100;
+    if (WEIGHT_STEPS.includes(d)) counts.set(d, (counts.get(d) || 0) + 1);
+  };
+  let prevTop = 0;
+  for (const h of exerciseHistory(workouts, exerciseId)) {
+    const ws = [...new Set(h.sets.filter(isCountable).map((s) => s.weight).filter((w) => w > 0))].sort((a, b) => a - b);
+    for (let i = 1; i < ws.length; i++) add(ws[i] - ws[i - 1]);
+    const top = h.stats.maxWeight;
+    if (top > 0 && prevTop > 0 && top !== prevTop) add(Math.abs(top - prevTop));
+    if (top > 0) prevTop = top;
+  }
+  let best = null, bestN = 0;
+  for (const [d, n] of counts) if (n > bestN || (n === bestN && d > best)) { best = d; bestN = n; }
+  return bestN >= 2 ? best : fallback;
+}
