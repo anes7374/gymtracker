@@ -6,7 +6,7 @@ import { confirmDialog, promptDialog } from '../ui/sheets.js';
 import { navigate, back } from '../router.js';
 import * as repo from '../repo.js';
 import { startWorkout } from './home.js';
-import { computeAllPRs, sessionStats, workoutVolume, workoutSetCount, epley1RM, PR_LABELS } from '../lib/calc.js';
+import { computeAllPRs, sessionStats, workoutVolume, workoutSetCount, setMetrics, prLabel } from '../lib/calc.js';
 import { monthGrid, workoutsByDay, countsByWeek, dayKey, startOfWeek, periodSummary } from '../lib/stats.js';
 import { fmtDate, fmtTime, fmtDuration, fmtMonth, fmtNum, fmtSet, count } from '../lib/format.js';
 
@@ -230,13 +230,13 @@ export async function workoutDetailView(id) {
       e.notes ? h('p', { class: 'notes-text' }, e.notes) : null,
       e.sets.map((s, si) => {
         const label = s.type === 'warmup' ? 'W' : s.type === 'drop' ? 'D' : s.type === 'failure' ? 'F' : String(++n);
-        const e1 = s.type !== 'warmup' ? epley1RM(s.weight, s.reps) : null;
+        const e1 = s.type !== 'warmup' ? setMetrics(s).e1rm : null;
         const types = prs[si] || [];
         return h('div', { class: 'detail-set' + (s.type === 'warmup' ? ' warmup' : '') + (types.length ? ' pr' : '') },
           h('span', { class: 'set-num static' }, label),
           h('span', { class: 'ds-main' }, fmtSet(s)),
           h('span', { class: 'ds-sub muted' }, e1 ? `1RM ${fmtNum(e1, 1)}` : ''),
-          types.length ? h('span', { class: 'ds-pr', title: types.map((t) => PR_LABELS[t]).join(', ') }, icon('trophy', { size: 18 })) : h('span'));
+          types.length ? h('span', { class: 'ds-pr', title: types.map((t) => prLabel(t, repo.exercise(e.exerciseId))).join(', ') }, icon('trophy', { size: 18 })) : h('span'));
       })));
   });
 

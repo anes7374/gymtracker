@@ -3,7 +3,7 @@
 
 import { h, clear, toast } from './dom.js';
 import { icon } from './icons.js';
-import { openSheet } from './sheets.js';
+import { openSheet, confirmDialog } from './sheets.js';
 import * as repo from '../repo.js';
 import { CATEGORIES, normalizeExerciseName } from '../lib/exercises-data.js';
 import { normalizeSearch } from '../lib/format.js';
@@ -56,7 +56,7 @@ export function pickExercises({ title = 'Übung hinzufügen', multi = true, excl
           class: 'pick-item' + (idx !== -1 ? ' selected' : ''),
           onclick: () => toggle(e.id),
         },
-        h('span', { class: 'pick-text' }, h('span', { class: 'pick-name' }, e.name), h('span', { class: 'pick-sub' }, e.custom ? `${e.category} · eigene` : e.category)),
+        h('span', { class: 'pick-text' }, h('span', { class: 'pick-name' }, e.name), h('span', { class: 'pick-sub' }, [e.category, e.assisted && 'unterstützt (−kg)', e.custom && 'eigene'].filter(Boolean).join(' · '))),
         h('span', { class: 'pick-mark' }, idx !== -1 ? (multi ? String(idx + 1) : icon('check')) : null)));
       }
     }
@@ -103,14 +103,41 @@ export function exerciseForm(existing = {}) {
     const isEdit = !!existing.id;
     const name = h('input', { class: 'input', type: 'text', value: existing.name || '', placeholder: 'z. B. Bankdrücken (Schrägbank)', autocomplete: 'off', enterkeyhint: 'done' });
     const cat = h('select', { class: 'input' }, CATEGORIES.map((c) => h('option', { value: c, selected: c === (existing.category || 'Sonstige') }, c)));
-    const bw = h('input', { type: 'checkbox', checked: !!existing.bodyweight });
+    // Art der Übung: normales Gewicht, Körpergewicht (+ Zusatz) oder unterstützt (Minusgewicht)
+    let type = existing.assisted ? 'assist' : existing.bodyweight ? 'bw' : 'weight';
+    const TYPE_HINTS = {
+      weight: 'Normale Übung mit Gewicht.',
+      bw: 'Gewicht ist optional – nur Zusatzgewicht eintragen (z. B. Klimmzüge mit Gürtel).',
+      assist: 'Maschine oder Band hilft (z. B. Klimmzug-Maschine). Du tippst die Hilfe ein, gespeichert wird sie als Minusgewicht: 30 kg Hilfe = −30 kg. Weniger Hilfe zählt als Fortschritt.',
+    };
+    const typeSeg = h('div', { class: 'segmented' });
+    const typeHint = h('small', { class: 'muted type-hint' });
+    const renderType = () => {
+      typeSeg.replaceChildren(...[['weight', 'Gewicht'], ['bw', 'Körpergewicht'], ['assist', 'Unterstützt']].map(([val, label]) =>
+        h('button', { type: 'button', class: 'seg' + (type === val ? ' active' : ''), onclick: () => { type = val; renderType(); } }, label)));
+      typeHint.textContent = TYPE_HINTS[type];
+    };
+    renderType();
 
     async function save() {
       const n = name.value.trim().replace(/\s+/g, ' ');
       if (!n) { name.focus(); return; }
       const dup = (await repo.exercises()).find((e) => e.id !== existing.id && normalizeExerciseName(e.name) === normalizeExerciseName(n));
       if (dup) { toast(`„${dup.name}“ gibt es schon.`); return; }
-      result = await repo.saveExercise({ ...existing, name: n, category: cat.value, bodyweight: bw.checked, custom: true });
+      const assisted = type === 'assist';
+      // Typ geändert: bisherige Gewichte passend umrechnen (Hilfe <-> Gewicht)?
+      if (isEdit && !!existing.assisted !== assisted) {
+        const signs = await repo.weightSigns(existing.id);
+        const affected = assisted ? signs.positive : signs.negative;
+        if (affected && await confirmDialog({
+          title: 'Bisherige Einträge umrechnen?',
+          message: assisted
+            ? `${affected} Sätze haben ein Gewicht. War das die Hilfe der Maschine? Dann werden sie zu Minusgewicht (30 kg → −30 kg).`
+            : `${affected} Sätze haben Minusgewicht (Unterstützung). Sollen sie wieder als normales Gewicht zählen (−30 kg → 30 kg)?`,
+          confirmLabel: 'Umrechnen', cancelLabel: 'So lassen',
+        })) await repo.convertAssisted(existing.id, assisted);
+      }
+      result = await repo.saveExercise({ ...existing, name: n, category: cat.value, bodyweight: type === 'bw', assisted, custom: true });
       s.close();
     }
 
@@ -119,7 +146,7 @@ export function exerciseForm(existing = {}) {
       body: h('div', { class: 'form' },
         h('label', { class: 'field' }, h('span', { class: 'field-label' }, 'Name'), name),
         h('label', { class: 'field' }, h('span', { class: 'field-label' }, 'Muskelgruppe'), cat),
-        h('label', { class: 'switch-row' }, h('span', null, 'Körpergewichtsübung', h('small', null, 'Gewicht ist optional (Zusatzgewicht)')), bw),
+        h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Art'), typeSeg, typeHint),
       ),
       footer: [
         h('button', { class: 'btn secondary', onclick: () => s.close() }, 'Abbrechen'),

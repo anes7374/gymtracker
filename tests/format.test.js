@@ -11,6 +11,8 @@ test('parseNumber akzeptiert Komma und Punkt', () => {
   assert.equal(parseNumber('1.234,5'), 1234.5);
   assert.equal(parseNumber('1,234.5'), 1234.5);
   assert.equal(parseNumber(42), 42);
+  assert.equal(parseNumber('−30'), -30); // typografisches Minus
+  assert.equal(parseNumber('-27,5'), -27.5);
 });
 
 test('parseNumber lehnt Ungültiges ab', () => {
@@ -24,6 +26,7 @@ test('fmtNum formatiert deutsch', () => {
   assert.equal(fmtNum(80), '80');
   assert.equal(fmtNum(93.3333, 1), '93,3');
   assert.equal(fmtNum(null), '');
+  assert.equal(fmtNum(-30), '−30');
 });
 
 test('fmtSet zeigt Gewicht × Wiederholungen', () => {

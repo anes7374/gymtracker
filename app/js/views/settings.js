@@ -13,7 +13,7 @@ import { checkForUpdate } from '../pwa.js';
 import { APP_VERSION } from '../version.js';
 import { createBackup, serializeBackup, parseBackup, backupFileName } from '../lib/backup.js';
 import { parseStrongCSV, planStrongImport } from '../lib/strong-csv.js';
-import { fmtClock, fmtNum, fmtDateShort, fmtRelativeDay, count } from '../lib/format.js';
+import { fmtClock, fmtNum, fmtDateShort, fmtRelativeDay, count, parseNumber } from '../lib/format.js';
 
 const REST_PRESETS = [60, 90, 120, 150, 180, 240];
 
@@ -65,6 +65,24 @@ export async function settingsView() {
         h('div', { class: 'goal-val' }, goalVal, h('span', { class: 'muted small' }, 'Trainings pro Woche')),
         h('button', { class: 'step', 'aria-label': 'Ein Training mehr', onclick: () => setGoal(1) }, '+')),
       h('p', { class: 'muted small', style: { margin: 0 } }, 'Für Wochen-Serie, Kalender und Startseite.'))));
+
+  // --- Körpergewicht -----------------------------------------------------------------
+  const bwIn = h('input', {
+    class: 'input bw-input', type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: 'z. B. 80',
+    value: s.bodyweight ? fmtNum(s.bodyweight, 1, false) : '', 'aria-label': 'Körpergewicht in kg',
+  });
+  bwIn.addEventListener('change', async () => {
+    const v = parseNumber(bwIn.value);
+    if (bwIn.value.trim() && !(v > 20 && v < 400)) { toast('Bitte ein Körpergewicht in kg eingeben.'); return; }
+    await repo.setSetting('bodyweight', v || null);
+    bwIn.value = v ? fmtNum(v, 1, false) : '';
+    toast(v ? 'Körpergewicht gespeichert' : 'Körpergewicht entfernt');
+  });
+  body.append(section('Körpergewicht',
+    h('div', { class: 'setting-block' },
+      h('label', { class: 'bw-row' }, bwIn, h('span', { class: 'muted' }, 'kg')),
+      h('p', { class: 'muted small', style: { margin: 0 } },
+        'Für unterstützte Übungen (z. B. Klimmzüge an der Maschine): effektive Last = Körpergewicht − Hilfe. Damit gibt es auch dort 1RM, Volumen und Kraftentwicklung.'))));
 
   // --- Darstellung ------------------------------------------------------------------
   const seg = h('div', { class: 'segmented' });

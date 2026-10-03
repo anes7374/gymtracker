@@ -3,6 +3,14 @@
 
 const EPS = 1e-9;
 
+// Körpergewicht für unterstützte Übungen (Klimmzug-/Dip-Maschine, Band).
+// Unterstützung wird als negatives Gewicht gespeichert (30 kg Hilfe = −30).
+// Mit Körpergewicht: effektive Last = Körpergewicht − Unterstützung.
+export const calcConfig = { bodyweight: null };
+export function setBodyweight(kg) {
+  calcConfig.bodyweight = kg > 0 ? kg : null;
+}
+
 /**
  * Geschätztes 1RM nach Epley: Gewicht × (1 + Wdh/30).
  * Bei genau 1 Wiederholung ist das 1RM das Gewicht selbst.
@@ -23,37 +31,52 @@ export function isCountable(set) {
   return !!set && set.done !== false && set.type !== 'warmup' && set.reps > 0;
 }
 
-/** Kennzahlen eines einzelnen Satzes. */
+/** Tatsächlich bewegte Last: Gewicht bzw. Körpergewicht − Unterstützung (sonst 0). */
+export function effectiveLoad(set) {
+  const w = set.weight;
+  if (w > 0) return w;
+  if (w < 0 && calcConfig.bodyweight) return Math.max(0, calcConfig.bodyweight + w);
+  return 0;
+}
+
+/**
+ * Kennzahlen eines einzelnen Satzes; null = für diesen Satz nicht sinnvoll.
+ * weight: das eingetragene Gewicht – bei Unterstützung negativ, sodass weniger
+ *         Hilfe ein höherer Wert ist (−20 > −30).
+ * e1rm/volume: aus der effektiven Last (Unterstützung nur mit Körpergewicht).
+ * reps: nur bei Sätzen ganz ohne Gewicht (z. B. Klimmzüge ohne Zusatz/Hilfe).
+ */
 export function setMetrics(set) {
-  const w = set.weight > 0 ? set.weight : 0;
+  const raw = set.weight ?? 0;
   const r = set.reps > 0 ? set.reps : 0;
+  const load = effectiveLoad(set);
   return {
-    weight: w,
-    e1rm: epley1RM(w, r) ?? 0,
-    volume: w * r,
-    // Wiederholungs-Rekord nur bei Sätzen ohne Zusatzgewicht (z. B. Klimmzüge)
-    reps: w === 0 ? r : 0,
+    weight: raw !== 0 ? raw : null,
+    e1rm: load > 0 ? epley1RM(load, r) : null,
+    volume: load > 0 && r > 0 ? load * r : null,
+    reps: raw === 0 && r > 0 ? r : null,
   };
 }
 
 /** Zusammenfassung aller Sätze einer Übung in einem Training. */
 export function sessionStats(sets) {
   let maxWeight = 0, best1RM = 0, volume = 0, bestSetVolume = 0, maxReps = 0, count = 0;
-  let heaviestSet = null;
+  let heaviestSet = null, hasWeight = false;
   for (const s of sets || []) {
     if (!isCountable(s)) continue;
     const m = setMetrics(s);
+    const w = m.weight ?? 0; // ohne Gewicht = 0, Unterstützung < 0
     count++;
-    if (!heaviestSet || m.weight > maxWeight || (m.weight === maxWeight && s.reps > heaviestSet.reps)) {
-      maxWeight = m.weight;
+    if (m.weight != null) hasWeight = true;
+    if (!heaviestSet || w > maxWeight || (w === maxWeight && s.reps > heaviestSet.reps)) {
+      maxWeight = w;
       heaviestSet = s;
     }
-    best1RM = Math.max(best1RM, m.e1rm);
-    bestSetVolume = Math.max(bestSetVolume, m.volume);
-    maxReps = Math.max(maxReps, m.reps);
-    volume += m.volume;
+    if (m.e1rm != null) best1RM = Math.max(best1RM, m.e1rm);
+    if (m.volume != null) { bestSetVolume = Math.max(bestSetVolume, m.volume); volume += m.volume; }
+    if (m.reps != null) maxReps = Math.max(maxReps, m.reps);
   }
-  return { count, maxWeight, best1RM, volume, bestSetVolume, maxReps, heaviestSet };
+  return { count, maxWeight, best1RM, volume, bestSetVolume, maxReps, heaviestSet, hasWeight };
 }
 
 /** Gesamtvolumen (kg) eines Trainings. */
@@ -82,7 +105,12 @@ export const PR_LABELS = {
 };
 
 export function emptyBests() {
-  return { has: false, e1rm: 0, weight: 0, volume: 0, reps: 0 };
+  return { has: false, e1rm: null, weight: null, volume: null, reps: null };
+}
+
+/** Rekord-Bezeichnung; bei unterstützten Übungen heißt „Schwerster Satz“ anders. */
+export function prLabel(type, exercise) {
+  return type === 'weight' && exercise?.assisted ? 'Weniger Unterstützung' : PR_LABELS[type];
 }
 
 /** Bestwerte um die Sätze eines Trainings erweitern (gibt neues Objekt zurück). */
@@ -92,7 +120,7 @@ export function updateBests(bests, sets) {
     if (!isCountable(s)) continue;
     const m = setMetrics(s);
     b.has = true;
-    for (const t of PR_TYPES) if (m[t] > b[t]) b[t] = m[t];
+    for (const t of PR_TYPES) if (m[t] != null && (b[t] == null || m[t] > b[t])) b[t] = m[t];
   }
   return b;
 }
@@ -108,13 +136,14 @@ export function detectSetPRs(sets, bests) {
   const result = (sets || []).map(() => []);
   if (!bests || !bests.has) return result;
   for (const t of PR_TYPES) {
-    let bestIdx = -1, bestVal = 0;
+    let bestIdx = -1, bestVal = null;
     (sets || []).forEach((s, i) => {
       if (!isCountable(s)) return;
       const v = setMetrics(s)[t];
-      if (v > bestVal + EPS) { bestVal = v; bestIdx = i; }
+      if (v != null && (bestVal == null || v > bestVal + EPS)) { bestVal = v; bestIdx = i; }
     });
-    if (bestIdx !== -1 && bestVal > bests[t] + EPS) result[bestIdx].push(t);
+    // Nur ein PR, wenn es für diese Art schon einen Vergleichswert gibt.
+    if (bestIdx !== -1 && bests[t] != null && bestVal > bests[t] + EPS) result[bestIdx].push(t);
   }
   return result;
 }
@@ -194,11 +223,15 @@ export const SERIES = {
   reps: { label: 'Meiste Wiederholungen', key: 'maxReps', unit: 'Wdh.' },
 };
 
-/** Datenpunkte {x: Zeitstempel, y: Wert} für ein Diagramm; Trainings ohne Wert entfallen. */
-export function progressSeries(history, metric, { since = -Infinity } = {}) {
+/**
+ * Datenpunkte {x: Zeitstempel, y: Wert} für ein Diagramm; Trainings ohne Wert entfallen.
+ * assisted: Gewicht ist Unterstützung (≤ 0) – dann zählen auch Werte ≤ 0 (0 = ohne Hilfe).
+ */
+export function progressSeries(history, metric, { since = -Infinity, assisted = false } = {}) {
   const key = SERIES[metric].key;
+  const keep = metric === 'weight' && assisted ? (h) => h.stats.count > 0 && h.stats[key] <= 0 : (h) => h.stats[key] > 0;
   return history
-    .filter((h) => h.date >= since && h.stats[key] > 0)
+    .filter((h) => h.date >= since && keep(h))
     .map((h) => ({ x: h.date, y: h.stats[key], workoutId: h.workoutId }));
 }
 
@@ -213,7 +246,7 @@ export function personalRecords(workouts, exerciseId) {
       if (!isCountable(s)) continue;
       const m = setMetrics(s);
       for (const t of PR_TYPES) {
-        if (m[t] > 0 && (!rec[t] || m[t] > rec[t].value + EPS)) {
+        if (m[t] != null && (!rec[t] || m[t] > rec[t].value + EPS)) {
           rec[t] = { value: m[t], date: h.date, workoutId: h.workoutId, set: s };
         }
       }
@@ -256,9 +289,10 @@ export function inferWeightStep(workouts, exerciseId, fallback = 2.5) {
   };
   let prevTop = 0;
   for (const h of exerciseHistory(workouts, exerciseId)) {
-    const ws = [...new Set(h.sets.filter(isCountable).map((s) => s.weight).filter((w) => w > 0))].sort((a, b) => a - b);
+    // Beträge, damit es auch für Unterstützung (negativ) funktioniert
+    const ws = [...new Set(h.sets.filter(isCountable).map((s) => Math.abs(s.weight || 0)).filter((w) => w > 0))].sort((a, b) => a - b);
     for (let i = 1; i < ws.length; i++) add(ws[i] - ws[i - 1]);
-    const top = h.stats.maxWeight;
+    const top = Math.abs(h.stats.maxWeight || 0);
     if (top > 0 && prevTop > 0 && top !== prevTop) add(Math.abs(top - prevTop));
     if (top > 0) prevTop = top;
   }

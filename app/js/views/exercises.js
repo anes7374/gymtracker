@@ -93,11 +93,22 @@ export async function exerciseDetailView(id) {
   const workouts = await repo.workouts();
   const hist = exerciseHistory(workouts, id);
   const rec = personalRecords(workouts, id);
-  const hasWeight = hist.some((r) => r.stats.maxWeight > 0);
+  const assisted = !!ex.assisted;
+  const { bodyweight } = await repo.settings();
+  const hasWeight = hist.some((r) => r.stats.hasWeight);
   const body = h('div', { class: 'page' },
     h('div', { class: 'page-head' },
       h('h1', { class: 'page-title' }, ex.name),
-      h('span', { class: 'muted' }, ex.category + (ex.custom ? ' · eigene Übung' : '') + (ex.bodyweight ? ' · Körpergewicht' : ''))));
+      h('span', { class: 'muted' }, ex.category + (ex.custom ? ' · eigene Übung' : '') +
+        (ex.bodyweight ? ' · Körpergewicht' : '') + (assisted ? ' · unterstützt (Minusgewicht)' : ''))));
+
+  if (assisted && !bodyweight) {
+    body.append(h('button', { class: 'card hint', onclick: () => navigate('/settings') },
+      icon('sliders'),
+      h('span', null, h('strong', null, 'Körpergewicht eintragen'), h('br'),
+        'Dann rechnet die App mit der effektiven Last (Körpergewicht − Hilfe) und zeigt auch 1RM, Volumen und Kraftentwicklung.'),
+      icon('chevron')));
+  }
 
   if (!hist.length) {
     body.append(h('div', { class: 'empty' },
@@ -106,17 +117,23 @@ export async function exerciseDetailView(id) {
   } else {
     // Rekorde
     const tiles = [];
-    if (hasWeight) {
+    if (assisted) {
+      tiles.push(recordTile('Geringste Unterstützung', rec.weight, (r) => fmtNum(r.value) + ' kg', (r) => fmtSet(r.set)));
+      if (rec.e1rm) tiles.push(recordTile('Geschätztes 1RM', rec.e1rm, (r) => fmtNum(r.value, 1) + ' kg', () => 'effektive Last'));
+      if (rec.sessionVolume) tiles.push(recordTile('Bestes Trainingsvolumen', rec.sessionVolume, (r) => fmtNum(r.value, 0) + ' kg', () => ''));
+    } else if (hasWeight) {
       tiles.push(recordTile('Geschätztes 1RM', rec.e1rm, (r) => fmtNum(r.value, 1) + ' kg', (r) => fmtSet(r.set)));
       tiles.push(recordTile('Schwerster Satz', rec.weight, (r) => fmtNum(r.value) + ' kg', (r) => fmtSet(r.set)));
       tiles.push(recordTile('Bestes Satzvolumen', rec.volume, (r) => fmtNum(r.value, 0) + ' kg', (r) => fmtSet(r.set)));
       tiles.push(recordTile('Bestes Trainingsvolumen', rec.sessionVolume, (r) => fmtNum(r.value, 0) + ' kg', () => ''));
     }
-    if (rec.reps) tiles.push(recordTile('Meiste Wiederholungen', rec.reps, (r) => `${r.value} Wdh.`, () => 'ohne Zusatzgewicht'));
+    if (rec.reps) tiles.push(recordTile('Meiste Wiederholungen', rec.reps, (r) => `${r.value} Wdh.`, () => (assisted ? 'ganz ohne Hilfe' : 'ohne Zusatzgewicht')));
     body.append(h('h2', { class: 'section-title' }, 'Persönliche Rekorde'), h('div', { class: 'record-grid' }, tiles));
 
     // Diagramm
-    const metrics = hasWeight ? ['e1rm', 'weight', 'volume'] : [];
+    const metrics = assisted
+      ? ['weight', ...(rec.e1rm ? ['e1rm', 'volume'] : [])]
+      : hasWeight ? ['e1rm', 'weight', 'volume'] : [];
     if (rec.reps) metrics.push('reps');
     if (!metrics.includes(chartState.metric)) chartState.metric = metrics[0];
 
@@ -127,7 +144,7 @@ export async function exerciseDetailView(id) {
 
     const renderChart = () => {
       clear(seg); clear(ranges); clear(chartBox);
-      const labels = { e1rm: '1RM', weight: 'Gewicht', volume: 'Volumen', reps: 'Wdh.' };
+      const labels = { e1rm: '1RM', weight: assisted ? 'Hilfe' : 'Gewicht', volume: 'Volumen', reps: 'Wdh.' };
       for (const m of metrics) {
         seg.append(h('button', {
           class: 'seg' + (m === chartState.metric ? ' active' : ''), role: 'tab', 'aria-selected': String(m === chartState.metric),
@@ -139,8 +156,10 @@ export async function exerciseDetailView(id) {
       }
       const months = RANGES.find((r) => r[0] === chartState.range)[2];
       const since = months ? addMonths(Date.now(), -months) : -Infinity;
-      const pts = progressSeries(hist, chartState.metric, { since });
-      const meta = SERIES[chartState.metric];
+      const pts = progressSeries(hist, chartState.metric, { since, assisted });
+      const meta = assisted && chartState.metric === 'weight'
+        ? { ...SERIES.weight, label: 'Unterstützung (−kg) – je näher an 0, desto weniger Hilfe' }
+        : SERIES[chartState.metric];
       const unit = meta.unit;
       const fmt = (v) => `${fmtNum(v, chartState.metric === 'volume' ? 0 : 1)} ${unit}`;
       if (!pts.length) {
@@ -155,7 +174,7 @@ export async function exerciseDetailView(id) {
       }));
       if (pts.length > 1) {
         const d = pts[pts.length - 1].y - pts[0].y;
-        const pct = pts[0].y ? (d / pts[0].y) * 100 : 0;
+        const pct = pts[0].y ? (d / Math.abs(pts[0].y)) * 100 : 0;
         delta.textContent = `Veränderung seit ${fmtDateShort(pts[0].x)}: ${d >= 0 ? '+' : '−'}${fmtNum(Math.abs(d), 1)} ${unit} (${d >= 0 ? '+' : '−'}${fmtNum(Math.abs(pct), 0)} %)`;
       } else {
         delta.textContent = 'Nur ein Training im Zeitraum.';
@@ -189,9 +208,7 @@ export async function exerciseDetailView(id) {
     if (shown < rows.length) body.append(more);
   }
 
-  const actions = ex.custom
-    ? [h('button', { class: 'icon-btn', 'aria-label': 'Übungsmenü', onclick: () => customMenu(ex) }, icon('more'))]
-    : [];
+  const actions = [h('button', { class: 'icon-btn', 'aria-label': 'Übungsmenü', onclick: () => exerciseMenu(ex) }, icon('more'))];
 
   return { title: ex.name, back: '/exercises', tab: 'exercises', actions, body };
 }
@@ -209,28 +226,41 @@ function addMonths(ts, n) {
   return d.getTime();
 }
 
-async function customMenu(ex) {
+/** Verlauf in eine andere Übung verschieben (eigene Übungen werden danach gelöscht). */
+async function moveHistory(ex) {
+  const [target] = await pickExercises({ title: ex.custom ? 'Zusammenführen mit …' : 'Verlauf übertragen nach …', multi: false, exclude: [ex.id] });
+  if (!target) return;
+  const tEx = repo.exercise(target);
+  const signs = await repo.weightSigns(ex.id);
+  // In eine unterstützte Übung: bisherige Gewichte waren die Hilfe -> negativ
+  const negate = !!tEx?.assisted && !ex.assisted && signs.positive > 0;
+  if (!(await confirmDialog({
+    title: ex.custom ? 'Übungen zusammenführen?' : 'Verlauf übertragen?',
+    message: `Alle Einträge von „${ex.name}“ werden zu „${tEx.name}“ verschoben.` +
+      (ex.custom ? ` „${ex.name}“ wird danach gelöscht.` : '') +
+      (negate ? `\n\n„${tEx.name}“ ist eine unterstützte Übung: Die Gewichte von ${count(signs.positive, 'Satz', 'Sätzen')} werden als Unterstützung übernommen (z. B. 30 kg → −30 kg).` : ''),
+    confirmLabel: ex.custom ? 'Zusammenführen' : 'Übertragen',
+  }))) return;
+  const res = await repo.mergeExercise(ex.id, target, { negate });
+  toast(`${count(res.workouts, 'Training', 'Trainings')} übernommen`);
+  navigate('/exercises/' + target, { replace: true });
+}
+
+async function exerciseMenu(ex) {
   const choice = await actionSheet({
     title: ex.name,
-    items: [
-      { label: 'Bearbeiten', value: 'edit', icon: 'edit' },
-      { label: 'Zusammenführen mit …', value: 'merge', icon: 'copy' },
-      { label: 'Löschen', value: 'delete', icon: 'trash', danger: true },
-    ],
+    items: ex.custom
+      ? [
+        { label: 'Bearbeiten', value: 'edit', icon: 'edit' },
+        { label: 'Zusammenführen mit …', value: 'merge', icon: 'copy' },
+        { label: 'Löschen', value: 'delete', icon: 'trash', danger: true },
+      ]
+      : [{ label: 'Verlauf übertragen nach …', value: 'merge', icon: 'copy' }],
   });
   if (choice === 'edit') {
     if (await exerciseForm(ex)) { toast('Übung gespeichert'); refresh(); }
   } else if (choice === 'merge') {
-    const [target] = await pickExercises({ title: 'Zusammenführen mit …', multi: false, exclude: [ex.id] });
-    if (!target) return;
-    if (!(await confirmDialog({
-      title: 'Übungen zusammenführen?',
-      message: `Alle Einträge von „${ex.name}“ werden zu „${repo.exerciseName(target)}“ verschoben. „${ex.name}“ wird danach gelöscht.`,
-      confirmLabel: 'Zusammenführen',
-    }))) return;
-    const res = await repo.mergeExercise(ex.id, target);
-    toast(`${count(res.workouts, 'Training', 'Trainings')} übernommen`);
-    navigate('/exercises/' + target, { replace: true });
+    await moveHistory(ex);
   } else if (choice === 'delete') {
     const u = await repo.exerciseUsage(ex.id);
     if (u.workouts || u.templates) {

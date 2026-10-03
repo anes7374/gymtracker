@@ -56,6 +56,7 @@ function cleanExercise(e) {
     bodyweight: !!e.bodyweight,
     custom: e.custom !== false,
   };
+  if (e.assisted) out.assisted = true;
   if (num(e.createdAt) != null) out.createdAt = num(e.createdAt);
   return out;
 }

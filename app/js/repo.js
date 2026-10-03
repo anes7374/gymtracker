@@ -3,6 +3,7 @@
 import * as db from './db.js';
 import { BUILTIN_EXERCISES } from './lib/exercises-data.js';
 import { planBackupImport } from './lib/backup.js';
+import { setBodyweight } from './lib/calc.js';
 import { uid } from './lib/uid.js';
 
 export const DEFAULT_SETTINGS = {
@@ -12,6 +13,7 @@ export const DEFAULT_SETTINGS = {
   theme: 'dark',      // 'dark' | 'light' | 'system'
   weeklyGoal: 3,      // Ziel: Trainings pro Woche
   weightSteps: {},    // eigener Gewichtsschritt je Übung für +/− (sonst aus dem Verlauf)
+  bodyweight: null,   // kg – für unterstützte Übungen (effektive Last = Körpergewicht − Hilfe)
 };
 
 export const BUILTIN_IDS = new Set(BUILTIN_EXERCISES.map((e) => e.id));
@@ -74,21 +76,59 @@ export async function exerciseUsage(id) {
   };
 }
 
-/** Übung `fromId` in `toId` aufgehen lassen (Verlauf + Vorlagen umschreiben, dann löschen). */
-export async function mergeExercise(fromId, toId) {
+/**
+ * Übung `fromId` in `toId` aufgehen lassen: Verlauf + Vorlagen umschreiben, dann
+ * löschen (eingebaute Übungen bleiben bestehen, nur ihr Verlauf zieht um).
+ * negate: positive Gewichte werden zu Unterstützung (30 kg -> −30 kg).
+ */
+export async function mergeExercise(fromId, toId, { negate = false } = {}) {
   const ws = (await workouts()).filter((w) => w.exercises.some((e) => e.exerciseId === fromId));
   const ts = (await templates()).filter((t) => t.exercises.some((e) => e.exerciseId === fromId));
-  const swap = (list) => list.map((e) => (e.exerciseId === fromId ? { ...e, exerciseId: toId } : e));
+  const flip = (sets) => (negate ? sets.map((st) => (st.weight > 0 ? { ...st, weight: -st.weight } : st)) : sets);
+  const swap = (list) => list.map((e) => (e.exerciseId === fromId ? { ...e, exerciseId: toId, ...(e.sets ? { sets: flip(e.sets) } : {}) } : e));
   const newWs = ws.map((w) => ({ ...w, exercises: swap(w.exercises) }));
   const newTs = ts.map((t) => ({ ...t, exercises: swap(t.exercises) }));
   await db.tx(['workouts', 'templates', 'exercises'], 'readwrite', (s) => {
     for (const w of newWs) s.workouts.put(w);
     for (const t of newTs) s.templates.put(t);
-    s.exercises.delete(fromId);
+    if (!BUILTIN_IDS.has(fromId)) s.exercises.delete(fromId);
   });
   woCache = null; tpCache = null; exCache = null;
   await Promise.all([workouts(), templates(), loadExercises()]);
   return { workouts: newWs.length, templates: newTs.length };
+}
+
+/**
+ * Vorzeichen der Gewichte einer Übung umstellen, wenn sie zur unterstützten
+ * Übung wird (30 -> −30) oder es nicht mehr ist (−30 -> 30). Rückgabe: Anzahl Sätze.
+ */
+export async function convertAssisted(exerciseId, toAssisted) {
+  let changed = 0;
+  const fix = (st) => {
+    if (toAssisted ? st.weight > 0 : st.weight < 0) { changed++; return { ...st, weight: -st.weight }; }
+    return st;
+  };
+  const ws = (await workouts())
+    .filter((w) => w.exercises.some((e) => e.exerciseId === exerciseId))
+    .map((w) => ({ ...w, exercises: w.exercises.map((e) => (e.exerciseId === exerciseId ? { ...e, sets: e.sets.map(fix) } : e)) }));
+  if (changed) {
+    await db.putMany('workouts', ws);
+    woCache = null;
+    await workouts();
+  }
+  return changed;
+}
+
+/** Wie viele Sätze einer Übung haben positive bzw. negative Gewichte? */
+export async function weightSigns(exerciseId) {
+  let positive = 0, negative = 0;
+  for (const w of await workouts()) {
+    for (const e of w.exercises) {
+      if (e.exerciseId !== exerciseId) continue;
+      for (const st of e.sets) { if (st.weight > 0) positive++; else if (st.weight < 0) negative++; }
+    }
+  }
+  return { positive, negative };
 }
 
 // --- Trainings ---------------------------------------------------------------
@@ -170,7 +210,10 @@ export function setMeta(key, value) {
 }
 
 export async function settings() {
-  if (!settingsCache) settingsCache = { ...DEFAULT_SETTINGS, ...(await getMeta('settings', {})) };
+  if (!settingsCache) {
+    settingsCache = { ...DEFAULT_SETTINGS, ...(await getMeta('settings', {})) };
+    setBodyweight(settingsCache.bodyweight);
+  }
   return settingsCache;
 }
 
@@ -182,6 +225,7 @@ export function settingsSync() {
 export async function setSetting(key, value) {
   const s = { ...(await settings()), [key]: value };
   settingsCache = s;
+  setBodyweight(s.bodyweight);
   await setMeta('settings', s);
   return s;
 }

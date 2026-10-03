@@ -11,7 +11,11 @@ Läuft komplett offline, ohne Account und ohne Server. Alle Daten bleiben auf de
   Aufwärm-/Dropsätze über die Satznummer markieren.
   **+/−-Knöpfe** unter dem aktuellen Satz: Wiederholungen in 1er-Schritten, Gewicht im Schritt, der aus dem
   Verlauf der Übung gelernt wird (z. B. 2,5 kg an der Maschine, 2 kg bei Kurzhanteln) – antippen zum Ändern, halten wiederholt.
-- **Übungen**: ~85 eingebaute Übungen (Deutsch) plus eigene. Eigene Übungen lassen sich umbenennen und mit anderen zusammenführen.
+- **Übungen**: ~90 eingebaute Übungen (Deutsch) plus eigene. Eigene Übungen lassen sich umbenennen und mit anderen
+  zusammenführen; der Verlauf jeder Übung lässt sich in eine andere übertragen.
+- **Unterstützte Übungen** (Klimmzug-/Dip-Maschine, Band): Hilfe wird als **Minusgewicht** gespeichert (30 kg Hilfe =
+  −30 kg). Getippt wird nur die Zahl von der Maschine. Weniger Hilfe zählt als Fortschritt/Rekord. Mit Körpergewicht
+  (unter „Mehr“) rechnet die App mit der effektiven Last (Körpergewicht − Hilfe) für 1RM, Volumen und Kraftentwicklung.
 - **Pausentimer**: startet nach jedem abgehakten Satz, ±15 s, Dauer einstellbar. Zeitstempelbasiert, läuft also nach
   Bildschirmsperre und App-Wechsel korrekt weiter.
 - **Fortschritt**: Diagramme für geschätztes 1RM (Epley), schwersten Satz und Volumen pro Training, persönliche Rekorde,

@@ -10,7 +10,7 @@ import * as active from '../active.js';
 import * as timer from '../timer.js';
 import { uid } from '../lib/uid.js';
 import {
-  lastPerformance, bestsForExercise, detectSetPRs, computeAllPRs, PR_LABELS, setMetrics, inferWeightStep, WEIGHT_STEPS,
+  lastPerformance, bestsForExercise, detectSetPRs, computeAllPRs, prLabel, setMetrics, inferWeightStep, WEIGHT_STEPS,
 } from '../lib/calc.js';
 import {
   parseNumber, fmtNum, fmtSet, fmtWeightInput, fmtClock, fmtDateTiny, toDateTimeLocal, fromDateTimeLocal, round,
@@ -156,6 +156,11 @@ async function editorView(w, mode, { isNew = false } = {}) {
 
   function makeCard(entry) {
     const ex = repo.exercise(entry.exerciseId);
+    // Unterstützte Übung (Maschine/Band): Hilfe = negatives Gewicht. Getippt wird
+    // die Zahl von der Maschine (iOS-Zahlenfeld hat kein Minus), gespeichert −Zahl.
+    const assisted = !!ex?.assisted;
+    // 0 bleibt 0 (= ganz ohne Hilfe) und ist damit kein leeres Feld.
+    const storeW = (n) => (n == null ? null : assisted ? (n === 0 ? 0 : -Math.abs(n)) : n);
     const { last, bests } = info(entry.exerciseId);
     const prevSets = last ? last.entry.sets : [];
     // Vorwerte zuordnen: Aufwärmsatz zu Aufwärmsatz, Arbeitssatz zu Arbeitssatz.
@@ -220,7 +225,8 @@ async function editorView(w, mode, { isNew = false } = {}) {
       const ph = placeholders()[i];
       if (field === 'weight') {
         const v = round((s.weight ?? ph.weight ?? 0) + dir * weightStep(entry.exerciseId), 2);
-        s.weight = v > 0 ? v : null;
+        // + = schwerer (bei Unterstützung: weniger Hilfe, höchstens bis 0 = ohne Hilfe)
+        s.weight = assisted ? Math.min(v, 0) || 0 : (v > 0 ? v : null);
         r.wIn.value = fmtWeightInput(s.weight);
         r.wIn.classList.remove('invalid');
       } else {
@@ -279,7 +285,7 @@ async function editorView(w, mode, { isNew = false } = {}) {
 
     // Satz-Tabelle
     card.append(h('div', { class: 'set-head' },
-      h('span', null, 'Satz'), h('span', null, 'Vorher'), h('span', null, 'kg'), h('span', null, 'Wdh.'),
+      h('span', null, 'Satz'), h('span', null, 'Vorher'), h('span', { title: assisted ? 'Unterstützung (Minusgewicht)' : null }, assisted ? '−kg' : 'kg'), h('span', null, 'Wdh.'),
       h('span', { class: 'set-head-check' }, icon('check', { size: 18 }))));
 
     entry.sets.forEach((set, i) => {
@@ -297,15 +303,16 @@ async function editorView(w, mode, { isNew = false } = {}) {
       }, prev ? fmtSet(prev, { unit: false }) : '–');
       const wIn = selectOnFocus(h('input', {
         class: 'set-input', type: 'text', inputmode: 'decimal', autocomplete: 'off', enterkeyhint: 'next',
-        'aria-label': 'Gewicht in kg', value: fmtWeightInput(set.weight),
+        'aria-label': assisted ? 'Unterstützung in kg' : 'Gewicht in kg', value: fmtWeightInput(set.weight),
       }));
       const rIn = selectOnFocus(h('input', {
         class: 'set-input', type: 'text', inputmode: 'numeric', pattern: '[0-9]*', autocomplete: 'off', enterkeyhint: 'done',
         'aria-label': 'Wiederholungen', value: set.reps ?? '',
       }));
       wIn.addEventListener('input', () => {
-        set.weight = parseNumber(wIn.value);
-        wIn.classList.toggle('invalid', wIn.value.trim() !== '' && set.weight == null);
+        const n = parseNumber(wIn.value);
+        set.weight = storeW(n);
+        wIn.classList.toggle('invalid', wIn.value.trim() !== '' && n == null);
         changed(); refreshStatus();
       });
       wIn.addEventListener('blur', () => { if (set.weight != null) wIn.value = fmtWeightInput(set.weight); });
@@ -355,13 +362,13 @@ async function editorView(w, mode, { isNew = false } = {}) {
         r.row.classList.toggle('warmup', s.type === 'warmup');
         r.row.classList.toggle('pr', prs[i].length > 0);
         r.num.textContent = SET_LABEL[s.type] || String(++n);
-        r.wIn.placeholder = ph[i].weight != null ? fmtWeightInput(ph[i].weight) : (ex?.bodyweight ? '+kg' : 'kg');
+        r.wIn.placeholder = ph[i].weight != null ? fmtWeightInput(ph[i].weight) : (assisted ? '−kg' : ex?.bodyweight ? '+kg' : 'kg');
         r.rIn.placeholder = ph[i].reps != null ? String(ph[i].reps) : '0';
         r.check.setAttribute('aria-pressed', s.done ? 'true' : 'false');
       });
       const found = [];
       prs.forEach((types, i) => {
-        for (const t of types) found.push(`${PR_LABELS[t]} ${fmtPR(t, entry.sets[i])}`);
+        for (const t of types) found.push(`${prLabel(t, ex)} ${fmtPR(t, entry.sets[i])}`);
       });
       prLine.hidden = !found.length;
       prLine.replaceChildren(icon('trophy', { size: 18 }), h('span', null, 'Neuer Rekord: ' + found.join(' · ')));
@@ -391,7 +398,7 @@ async function editorView(w, mode, { isNew = false } = {}) {
       if (s.done) advanceFrom(entry);
       else activate(entry, i);
       if (s.done && prs[i].length && !before) {
-        toast('🏆 Neuer PR: ' + prs[i].map((t) => PR_LABELS[t]).join(', '), { kind: 'pr' });
+        toast('🏆 Neuer PR: ' + prs[i].map((t) => prLabel(t, ex)).join(', '), { kind: 'pr' });
       }
     }
 

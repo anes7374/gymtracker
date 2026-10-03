@@ -4,7 +4,7 @@ export const CATEGORIES = [
   'Brust', 'Rücken', 'Schultern', 'Bizeps', 'Trizeps', 'Beine', 'Gesäß', 'Waden', 'Bauch', 'Ganzkörper', 'Sonstige',
 ];
 
-// [id, Name, Kategorie, Körpergewichtsübung?]
+// [id, Name, Kategorie, Typ?]  Typ: true = Körpergewicht (+ Zusatzgewicht), 'assist' = unterstützt (Maschine/Band)
 const RAW = [
   // Brust
   ['b-bankdruecken-lh', 'Bankdrücken (Langhantel)', 'Brust'],
@@ -25,6 +25,7 @@ const RAW = [
   ['b-kreuzheben-sumo', 'Sumo-Kreuzheben (Langhantel)', 'Rücken'],
   ['b-klimmzuege', 'Klimmzüge', 'Rücken', true],
   ['b-klimmzuege-ug', 'Klimmzüge (Untergriff)', 'Rücken', true],
+  ['b-klimmzuege-assist', 'Klimmzüge (unterstützt)', 'Rücken', 'assist'],
   ['b-latziehen', 'Latziehen (Kabel)', 'Rücken'],
   ['b-latziehen-eng', 'Latziehen eng (Kabel)', 'Rücken'],
   ['b-rudern-lh', 'Langhantelrudern', 'Rücken'],
@@ -70,6 +71,7 @@ const RAW = [
   ['b-ueberkopf-kh', 'Überkopf-Trizepsdrücken (Kurzhantel)', 'Trizeps'],
   ['b-enges-bankdruecken', 'Enges Bankdrücken (Langhantel)', 'Trizeps'],
   ['b-dips-trizeps', 'Dips (Trizeps)', 'Trizeps', true],
+  ['b-dips-assist', 'Dips (unterstützt)', 'Trizeps', 'assist'],
   ['b-kickbacks', 'Trizeps-Kickbacks (Kurzhantel)', 'Trizeps'],
   // Beine
   ['b-kniebeuge', 'Kniebeuge (Langhantel)', 'Beine'],
@@ -109,8 +111,8 @@ const RAW = [
   ['b-power-clean', 'Power Clean (Langhantel)', 'Ganzkörper'],
 ];
 
-export const BUILTIN_EXERCISES = RAW.map(([id, name, category, bodyweight]) => ({
-  id, name, category, bodyweight: !!bodyweight, custom: false,
+export const BUILTIN_EXERCISES = RAW.map(([id, name, category, type]) => ({
+  id, name, category, bodyweight: type === true, custom: false, ...(type === 'assist' ? { assisted: true } : {}),
 }));
 
 /** Normalisiert Übungsnamen für Vergleiche (Groß/Klein, Bindestriche, Leerzeichen). */
@@ -147,6 +149,7 @@ const STRONG_RAW = {
   'b-kreuzheben-sumo': ['Sumo Deadlift (Barbell)', 'Sumo Deadlift'],
   'b-klimmzuege': ['Pull Up', 'Pull Ups', 'Pull-Up', 'Pull Up (Weighted)'],
   'b-klimmzuege-ug': ['Chin Up', 'Chin Ups', 'Chin-Up'],
+  'b-klimmzuege-assist': ['Pull Up (Assisted)', 'Assisted Pull Up', 'Pull Up (Machine Assisted)', 'Pull Up (Band)'],
   'b-latziehen': ['Lat Pulldown (Cable)', 'Lat Pulldown', 'Lat Pulldown (Machine)', 'Lat Pulldown - Wide Grip (Cable)'],
   'b-latziehen-eng': ['Lat Pulldown - Close Grip (Cable)', 'Close Grip Lat Pulldown'],
   'b-rudern-lh': ['Bent Over Row (Barbell)', 'Barbell Row', 'Pendlay Row (Barbell)'],
@@ -188,7 +191,8 @@ const STRONG_RAW = {
   'b-ueberkopf-kabel': ['Triceps Extension (Cable)', 'Overhead Triceps Extension (Cable)', 'Overhead Cable Triceps Extension'],
   'b-ueberkopf-kh': ['Triceps Extension (Dumbbell)', 'Overhead Triceps Extension (Dumbbell)'],
   'b-enges-bankdruecken': ['Bench Press - Close Grip (Barbell)', 'Close Grip Bench Press'],
-  'b-dips-trizeps': ['Triceps Dip', 'Triceps Dip (Assisted)', 'Bench Dip'],
+  'b-dips-trizeps': ['Triceps Dip', 'Bench Dip'],
+  'b-dips-assist': ['Triceps Dip (Assisted)', 'Chest Dip (Assisted)', 'Dip (Assisted)', 'Assisted Dip'],
   'b-kickbacks': ['Triceps Kickback (Dumbbell)', 'Triceps Kickback'],
   'b-kniebeuge': ['Squat (Barbell)', 'Back Squat (Barbell)'],
   'b-frontkniebeuge': ['Front Squat (Barbell)', 'Front Squat'],

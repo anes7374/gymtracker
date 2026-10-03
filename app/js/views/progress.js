@@ -208,7 +208,7 @@ function trendsCard(workouts, from, to) {
   const list = h('div', { class: 'trend-list' });
   const more = h('button', { class: 'btn ghost block' });
 
-  const fmtMetric = (t, v) => (t.metric === 'reps' ? `${fmtNum(v, 0)} Wdh.` : `${fmtNum(v, 1)} kg`);
+  const fmtMetric = (t, v) => (t.metric === 'reps' ? `${fmtNum(v, 0)} Wdh.` : `${fmtNum(v, t.metric === 'weight' ? 2 : 1)} kg`);
   const renderList = () => {
     clear(list);
     const shown = state.allTrends ? trends : trends.slice(0, TREND_PREVIEW);
@@ -252,6 +252,6 @@ function prsCard(workouts, prInfo, from) {
         h('strong', { class: 'pr-name' }, repo.exerciseName(e.exerciseId)),
         h('span', { class: 'muted small pr-date' }, fmtRelativeDay(e.date)),
         h('span', { class: 'pr-sub small' },
-          h('strong', null, `${SHORT_PR[e.types[0]]} ${value(e.types[0], e.set)}`),
+          h('strong', null, `${e.types[0] === 'weight' && repo.exercise(e.exerciseId)?.assisted ? 'Weniger Hilfe' : SHORT_PR[e.types[0]]} ${value(e.types[0], e.set)}`),
           h('span', { class: 'muted' }, ` · ${fmtSet(e.set)}`))))));
 }

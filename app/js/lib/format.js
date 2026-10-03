@@ -9,6 +9,7 @@ export function parseNumber(input) {
   if (input == null) return null;
   if (typeof input === 'number') return Number.isFinite(input) ? input : null;
   let s = String(input).trim().replace(/[\s ']/g, '');
+  s = s.replace(/[−–]/g, '-'); // typografisches Minus / Gedankenstrich
   if (!s) return null;
   const lastComma = s.lastIndexOf(',');
   const lastDot = s.lastIndexOf('.');
@@ -48,7 +49,7 @@ function nf(decimals, grouping) {
 /** 1234.5 -> "1.234,5"; null -> "" */
 export function fmtNum(n, decimals = 2, grouping = true) {
   if (n == null || !Number.isFinite(n)) return '';
-  return nf(decimals, grouping).format(n);
+  return nf(decimals, grouping).format(n).replace('-', '−'); // echtes Minuszeichen
 }
 
 /** Anzahl mit Einzahl/Mehrzahl: count(1, 'Training', 'Trainings') -> "1 Training" */

@@ -209,19 +209,23 @@ export function exerciseTrends(workouts, from, to, { minSessions = 3, threshold 
       const st = sessionStats(sets);
       if (!st.count) continue;
       if (!sessions.has(ex)) sessions.set(ex, []);
-      sessions.get(ex).push({ x: w.startedAt, e1rm: st.best1RM, reps: st.maxReps, workoutId: w.id });
+      sessions.get(ex).push({ x: w.startedAt, e1rm: st.best1RM, weight: st.maxWeight, hasWeight: st.hasWeight, reps: st.maxReps, workoutId: w.id });
     }
   }
   const avg = (arr) => arr.reduce((s, p) => s + p.y, 0) / arr.length;
   const out = [];
   for (const [exerciseId, list] of sessions) {
-    const metric = list.some((s) => s.e1rm > 0) ? 'e1rm' : 'reps';
-    const points = list.map((s) => ({ x: s.x, y: s[metric] })).filter((p) => p.y > 0);
+    // 1RM, sonst (Unterstützung ohne Körpergewicht) das Gewicht, sonst Wiederholungen
+    const metric = list.some((s) => s.e1rm > 0) ? 'e1rm' : list.some((s) => s.hasWeight) ? 'weight' : 'reps';
+    const points = list
+      .map((s) => ({ x: s.x, y: s[metric] }))
+      .filter((p) => (metric === 'weight' ? p.y != null : p.y > 0));
     if (points.length < minSessions) continue;
     const k = Math.min(3, Math.floor(points.length / 2));
     const first = avg(points.slice(0, k));
     const lastAvg = avg(points.slice(-k));
-    const change = first ? (lastAvg - first) / first : 0;
+    // Betrag im Nenner: von −30 auf −20 kg Unterstützung ist eine Verbesserung
+    const change = first ? (lastAvg - first) / Math.abs(first) : 0;
     const status = change >= threshold ? 'up' : change <= -threshold ? 'down' : 'flat';
     out.push({ exerciseId, metric, points, sessions: points.length, first, last: lastAvg, change, status });
   }

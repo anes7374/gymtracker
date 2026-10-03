@@ -9,6 +9,11 @@ import { normalizeExerciseName, STRONG_NAME_MAP } from './exercises-data.js';
 import { uid } from './uid.js';
 
 const LB_IN_KG = 0.45359237;
+const ASSIST_NAME = /assist|unterstützt|band\)/i;
+
+function hasNegativeWeight(parsed, name) {
+  return parsed.workouts.some((w) => w.exercises.some((e) => e.name === name && e.sets.some((s) => s.weight < 0)));
+}
 
 /** Ermittelt das Trennzeichen anhand der Kopfzeile (außerhalb von Anführungszeichen). */
 export function detectDelimiter(text) {
@@ -244,7 +249,7 @@ export function parseStrongCSV(text) {
     let weight = parseNumber(get('weight'));
     const unit = get('weightUnit') || weightHeaderUnit;
     if (weight != null && isLbs(unit)) { weight = round(weight * LB_IN_KG, 2); stats.convertedLbs = true; }
-    if (weight != null && weight <= 0) weight = null;
+    if (weight === 0) weight = null; // negativ = Unterstützung (z. B. Klimmzug-Maschine) bleibt erhalten
     let reps = parseNumber(get('reps'));
     reps = reps != null && reps > 0 ? Math.round(reps) : null;
     let distance = parseNumber(get('distance'));
@@ -335,6 +340,7 @@ export function planStrongImport(parsed, existing, { makeId = uid, now = Date.no
     }
     if (!target) {
       target = { id: makeId(), name: name.trim(), category: 'Sonstige', bodyweight: false, custom: true, createdAt: now };
+      if (ASSIST_NAME.test(name) || hasNegativeWeight(parsed, name)) target.assisted = true;
       newExercises.push(target);
       byName.set(n, target);
       byId.set(target.id, target);
@@ -350,6 +356,11 @@ export function planStrongImport(parsed, existing, { makeId = uid, now = Date.no
     return minuteKeys.has(k) || minuteKeys.has(k - 1) || minuteKeys.has(k + 1);
   };
 
+  // Bei unterstützten Übungen ist das Gewicht die Hilfe -> negativ speichern,
+  // egal ob Strong sie als positive oder negative Zahl exportiert hat.
+  const assistedIds = new Set([...byId.values()].filter((e) => e.assisted).map((e) => e.id));
+  const toStored = (exerciseId, s) => (assistedIds.has(exerciseId) && s.weight > 0 ? { ...s, weight: -s.weight } : { ...s });
+
   const workouts = [];
   let duplicates = 0;
   let setCount = 0;
@@ -363,11 +374,10 @@ export function planStrongImport(parsed, existing, { makeId = uid, now = Date.no
       endedAt: pw.endedAt ?? null,
       notes: pw.notes || '',
       source: 'strong',
-      exercises: pw.exercises.map((e) => ({
-        exerciseId: idForName.get(e.name),
-        notes: e.notes || '',
-        sets: e.sets.map((s) => ({ ...s })),
-      })),
+      exercises: pw.exercises.map((e) => {
+        const exerciseId = idForName.get(e.name);
+        return { exerciseId, notes: e.notes || '', sets: e.sets.map((s) => toStored(exerciseId, s)) };
+      }),
     };
     for (const e of w.exercises) setCount += e.sets.length;
     workouts.push(w);
