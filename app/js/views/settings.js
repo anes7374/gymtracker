@@ -49,7 +49,11 @@ export async function settingsView() {
       presetRow),
     toggle('Automatisch starten', 'Nach jedem abgehakten Satz', s.restAuto, (v) => repo.setSetting('restAuto', v)),
     toggle('Ton am Ende', 'Nur hörbar, wenn die App geöffnet und das iPhone nicht stumm ist', s.restSound, (v) => repo.setSetting('restSound', v)),
-    h('button', { class: 'row-btn', onclick: () => timer.start(10) }, icon('timer'), h('span', null, 'Timer testen (10 s)'))));
+    h('button', { class: 'row-btn', onclick: () => timer.start(10) }, icon('timer'), h('span', null, 'Timer testen (10 s)')),
+    h('p', { class: 'muted small pad' }, 'Eigene Pausenzeit je Übung: im Training auf die Uhr neben der Übung tippen.')));
+
+  body.append(section('Im Training',
+    toggle('Bildschirm anlassen', 'Das iPhone sperrt sich während des Trainings nicht', s.keepAwake, (v) => repo.setSetting('keepAwake', v))));
 
   // --- Wochenziel -------------------------------------------------------------------
   const goalVal = h('span', { class: 'step-val big' }, String(s.weeklyGoal));
@@ -66,23 +70,13 @@ export async function settingsView() {
         h('button', { class: 'step', 'aria-label': 'Ein Training mehr', onclick: () => setGoal(1) }, '+')),
       h('p', { class: 'muted small', style: { margin: 0 } }, 'Für Wochen-Serie, Kalender und Startseite.'))));
 
-  // --- Körpergewicht -----------------------------------------------------------------
-  const bwIn = h('input', {
-    class: 'input bw-input', type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: 'z. B. 80',
-    value: s.bodyweight ? fmtNum(s.bodyweight, 1, false) : '', 'aria-label': 'Körpergewicht in kg',
-  });
-  bwIn.addEventListener('change', async () => {
-    const v = parseNumber(bwIn.value);
-    if (bwIn.value.trim() && !(v > 20 && v < 400)) { toast('Bitte ein Körpergewicht in kg eingeben.'); return; }
-    await repo.setSetting('bodyweight', v || null);
-    bwIn.value = v ? fmtNum(v, 1, false) : '';
-    toast(v ? 'Körpergewicht gespeichert' : 'Körpergewicht entfernt');
-  });
-  body.append(section('Körpergewicht',
-    h('div', { class: 'setting-block' },
-      h('label', { class: 'bw-row' }, bwIn, h('span', { class: 'muted' }, 'kg')),
-      h('p', { class: 'muted small', style: { margin: 0 } },
-        'Für unterstützte Übungen (z. B. Klimmzüge an der Maschine): effektive Last = Körpergewicht − Hilfe. Damit gibt es auch dort 1RM, Volumen und Kraftentwicklung.'))));
+  // --- Körper ------------------------------------------------------------------------
+  const bw = repo.currentBodyweight();
+  body.append(section('Körper',
+    h('button', { class: 'row-btn', onclick: () => navigate('/body') }, icon('chart'),
+      h('span', null, 'Körpergewicht & Maße', h('small', { class: 'muted' }, bw ? `aktuell ${fmtNum(bw, 1)} kg` : 'noch nichts eingetragen')),
+      icon('chevron', { size: 20, cls: 'muted' })),
+    h('p', { class: 'muted small pad' }, 'Das Körpergewicht nutzt die App auch für unterstützte Übungen (effektive Last = Körpergewicht − Hilfe) – jeweils mit dem Gewicht zum Zeitpunkt des Trainings.')));
 
   // --- Darstellung ------------------------------------------------------------------
   const seg = h('div', { class: 'segmented' });

@@ -31,6 +31,15 @@ Läuft komplett offline, ohne Account und ohne Server. Alle Daten bleiben auf de
 - **Verlauf** als **Kalender** (Trainingstage, Rekordtage, Trainings pro Woche, Wischen zum Monatswechsel) oder Liste.
   Trainings für vergangene Tage **nachtragen**. Details, bearbeiten, löschen, erneut trainieren, als Vorlage speichern.
 - **Wochenziel** (Einstellungen) für Serie, Kalender und Startseite.
+- **Im Training**: Progressions-Vorschlag (Wdh.-Ziel je Übung, z. B. 8–12: alle Sätze oben -> nächstes Mal mehr Gewicht),
+  Pausenzeit je Übung, ▲/▼-Vergleich mit dem gleichen Satz vom letzten Mal, Supersätze (abwechselnd, Pause nach der
+  Runde), RPE je Satz, fertige Übungen klappen ein, Bildschirm bleibt an, Satz/Übung löschen mit „Rückgängig“.
+- **Nach dem Training**: Zusammenfassung mit Vergleich zum letzten gleichen Training und Bild zum Teilen.
+  Vorlagen werden nur ergänzt (neue Übungen, mehr Sätze), nie verkleinert.
+- **Startseite**: „Als Nächstes“ aus der Rotation, Plateau-Hinweise, Hinweis wenn die App in Safari statt vom
+  Home-Bildschirm läuft.
+- **Körper**: Körpergewicht & Maße mit Verlauf; bei unterstützten Übungen zählt das Gewicht zum Trainingszeitpunkt.
+- **Jahresrückblick**, Kalender in Farben je Trainingsart, Helfer zum Zuordnen von Muskelgruppen.
 - **Split teilen**: Trainingstage mit Übungen (optional Satzanzahl, Trainingsfrequenz) als Text für den Coach –
   ohne Gewichte. Quelle: Vorlagen oder die letzten Trainings; aus dem Verlauf auch als Vorlagen übernehmbar.
 - **Backup**: Export als JSON über das iOS-Teilen-Menü (z. B. in iCloud Drive), Import mit „Zusammenführen“ oder „Ersetzen“.
@@ -52,7 +61,7 @@ app/                    ← das ist die App (wird 1:1 veröffentlicht)
   js/active.js          laufendes Training (übersteht App-Neustart)
   js/timer.js           Pausentimer
   js/pwa.js             Service Worker, Update-Hinweis, persist()
-  js/lib/               reine Logik (getestet): calc, stats, split, strong-csv, backup, format, exercises-data
+  js/lib/               reine Logik (getestet): calc, stats, split, templates, body, summary, strong-csv, backup, format, exercises-data
   js/ui/                DOM-Helfer, Icons, Sheets, Übungsauswahl, Diagramm
   js/views/             Bildschirme
 tests/                  Tests (node --test)

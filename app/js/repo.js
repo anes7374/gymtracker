@@ -4,16 +4,20 @@ import * as db from './db.js';
 import { BUILTIN_EXERCISES } from './lib/exercises-data.js';
 import { planBackupImport } from './lib/backup.js';
 import { setBodyweight } from './lib/calc.js';
+import { latestMeasure, annotateBodyweight } from './lib/body.js';
 import { uid } from './lib/uid.js';
 
 export const DEFAULT_SETTINGS = {
-  restSeconds: 120,   // Pausentimer in Sekunden
+  restSeconds: 120,   // Pausentimer in Sekunden (Standard)
   restAuto: true,     // Timer nach abgehaktem Satz automatisch starten
   restSound: true,    // Ton am Ende der Pause
   theme: 'dark',      // 'dark' | 'light' | 'system'
   weeklyGoal: 3,      // Ziel: Trainings pro Woche
+  keepAwake: true,    // Bildschirm während des Trainings anlassen
   weightSteps: {},    // eigener Gewichtsschritt je Übung für +/− (sonst aus dem Verlauf)
-  bodyweight: null,   // kg – für unterstützte Übungen (effektive Last = Körpergewicht − Hilfe)
+  repRanges: {},      // Wiederholungsbereich je Übung, z. B. { id: [8, 12] }
+  restByExercise: {}, // eigene Pausenzeit je Übung in Sekunden
+  bodyweight: null,   // veraltet (vor Körpermaßen) – wird beim Start übernommen
 };
 
 export const BUILTIN_IDS = new Set(BUILTIN_EXERCISES.map((e) => e.id));
@@ -22,6 +26,7 @@ const collator = new Intl.Collator('de', { sensitivity: 'base', numeric: true })
 let exCache = null;   // Map id -> Übung
 let woCache = null;   // Array, absteigend nach Datum
 let tpCache = null;   // Array, nach Reihenfolge
+let msCache = null;   // Körpermaße, absteigend nach Datum
 let settingsCache = null;
 
 export async function init() {
@@ -29,7 +34,31 @@ export async function init() {
   // Eingebaute Übungen immer aktuell halten (Upsert).
   await db.putMany('exercises', BUILTIN_EXERCISES);
   exCache = null;
-  await Promise.all([loadExercises(), workouts(), templates(), settings()]);
+  await Promise.all([loadExercises(), workouts(), templates(), settings(), measurements()]);
+  await migrateBodyweight();
+  refreshBodyweight();
+}
+
+// Früher gab es nur einen Körpergewicht-Wert in den Einstellungen -> als Messung übernehmen.
+async function migrateBodyweight() {
+  const s = await settings();
+  if (!s.bodyweight) return;
+  if (!latestMeasure(await measurements(), 'bodyweight')) {
+    await db.put('measurements', { id: uid(), date: Date.now(), bodyweight: s.bodyweight });
+    msCache = null;
+    await measurements();
+    await syncBodyweight();
+  }
+  await setSetting('bodyweight', null);
+}
+
+/** Aktuelles Körpergewicht (letzte Messung) für die Rechnungen im laufenden Training. */
+function refreshBodyweight() {
+  setBodyweight(latestMeasure(msCache || [], 'bodyweight')?.bodyweight ?? null);
+}
+
+export function currentBodyweight() {
+  return latestMeasure(msCache || [], 'bodyweight')?.bodyweight ?? null;
 }
 
 // --- Übungen -----------------------------------------------------------------
@@ -95,6 +124,7 @@ export async function mergeExercise(fromId, toId, { negate = false } = {}) {
   });
   woCache = null; tpCache = null; exCache = null;
   await Promise.all([workouts(), templates(), loadExercises()]);
+  if (negate) await syncBodyweight();
   return { workouts: newWs.length, templates: newTs.length };
 }
 
@@ -115,6 +145,7 @@ export async function convertAssisted(exerciseId, toAssisted) {
     await db.putMany('workouts', ws);
     woCache = null;
     await workouts();
+    await syncBodyweight();
   }
   return changed;
 }
@@ -143,6 +174,9 @@ export async function getWorkout(id) {
 }
 
 export async function saveWorkout(w) {
+  // Körpergewicht zum Trainingszeitpunkt an unterstützten Sätzen hinterlegen
+  const [annotated] = annotateBodyweight([w], await measurements());
+  if (annotated) w = annotated;
   await db.put('workouts', w);
   const list = (await workouts()).filter((x) => x.id !== w.id);
   list.push(w);
@@ -153,6 +187,11 @@ export async function saveWorkout(w) {
 export async function deleteWorkout(id) {
   await db.del('workouts', id);
   woCache = (await workouts()).filter((w) => w.id !== id);
+}
+
+/** Gelöschtes Training wiederherstellen (Rückgängig). */
+export async function restoreWorkout(w) {
+  return saveWorkout(w);
 }
 
 // --- Vorlagen ----------------------------------------------------------------
@@ -198,6 +237,43 @@ export async function moveTemplate(id, dir) {
   tpCache = null;
 }
 
+// --- Körpermaße ----------------------------------------------------------------
+
+export async function measurements() {
+  if (!msCache) msCache = (await db.getAll('measurements')).sort((a, b) => b.date - a.date);
+  return msCache;
+}
+
+export async function saveMeasurement(m) {
+  const item = { ...m };
+  if (!item.id) item.id = uid();
+  await db.put('measurements', item);
+  msCache = null;
+  await measurements();
+  await syncBodyweight();
+  return item;
+}
+
+export async function deleteMeasurement(id) {
+  await db.del('measurements', id);
+  msCache = null;
+  await measurements();
+  await syncBodyweight();
+}
+
+/**
+ * Nach Änderungen am Körpergewicht: aktuelles Gewicht setzen und bei allen
+ * unterstützten Sätzen das Körpergewicht zum Trainingszeitpunkt aktualisieren.
+ */
+async function syncBodyweight() {
+  refreshBodyweight();
+  const changed = annotateBodyweight(await workouts(), await measurements());
+  if (!changed.length) return;
+  await db.putMany('workouts', changed);
+  woCache = null;
+  await workouts();
+}
+
 // --- Meta & Einstellungen ----------------------------------------------------
 
 export async function getMeta(key, fallback = null) {
@@ -210,10 +286,7 @@ export function setMeta(key, value) {
 }
 
 export async function settings() {
-  if (!settingsCache) {
-    settingsCache = { ...DEFAULT_SETTINGS, ...(await getMeta('settings', {})) };
-    setBodyweight(settingsCache.bodyweight);
-  }
+  if (!settingsCache) settingsCache = { ...DEFAULT_SETTINGS, ...(await getMeta('settings', {})) };
   return settingsCache;
 }
 
@@ -225,9 +298,15 @@ export function settingsSync() {
 export async function setSetting(key, value) {
   const s = { ...(await settings()), [key]: value };
   settingsCache = s;
-  setBodyweight(s.bodyweight);
   await setMeta('settings', s);
   return s;
+}
+
+/** Einstellung je Übung setzen (z. B. 'repRanges', 'restByExercise'); null entfernt sie. */
+export async function setExerciseSetting(key, exerciseId, value) {
+  const map = { ...((await settings())[key] || {}) };
+  if (value == null) delete map[exerciseId]; else map[exerciseId] = value;
+  return setSetting(key, map);
 }
 
 // --- Import / Export ---------------------------------------------------------
@@ -238,6 +317,7 @@ export async function exportAll() {
     templates: await templates(),
     workouts: await workouts(),
     settings: await settings(),
+    measurements: await measurements(),
   };
 }
 
@@ -245,17 +325,19 @@ export async function exportAll() {
 export async function importBackup(incoming, mode) {
   const current = await exportAll();
   const next = planBackupImport(current, incoming, mode, BUILTIN_IDS);
-  await db.tx(['exercises', 'templates', 'workouts', 'meta'], 'readwrite', (s) => {
+  await db.tx(['exercises', 'templates', 'workouts', 'meta', 'measurements'], 'readwrite', (s) => {
     s.exercises.clear();
     s.templates.clear();
     s.workouts.clear();
+    s.measurements.clear();
     for (const e of BUILTIN_EXERCISES) s.exercises.put(e);
     for (const e of next.exercises) s.exercises.put(e);
     for (const t of next.templates) s.templates.put(t);
     for (const w of next.workouts) s.workouts.put(w);
+    for (const m of next.measurements || []) s.measurements.put(m);
     s.meta.put({ key: 'settings', value: next.settings });
   });
-  exCache = woCache = tpCache = settingsCache = null;
+  exCache = woCache = tpCache = msCache = settingsCache = null;
   await init();
   return next;
 }
@@ -268,15 +350,17 @@ export async function importStrong(plan) {
   });
   exCache = woCache = null;
   await Promise.all([loadExercises(), workouts()]);
+  await syncBodyweight();
 }
 
 export async function clearAll() {
-  await db.tx(['exercises', 'templates', 'workouts', 'meta'], 'readwrite', (s) => {
+  await db.tx(['exercises', 'templates', 'workouts', 'meta', 'measurements'], 'readwrite', (s) => {
     s.exercises.clear();
     s.templates.clear();
     s.workouts.clear();
     s.meta.clear();
+    s.measurements.clear();
   });
-  exCache = woCache = tpCache = settingsCache = null;
+  exCache = woCache = tpCache = msCache = settingsCache = null;
   await init();
 }

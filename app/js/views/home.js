@@ -8,8 +8,29 @@ import * as repo from '../repo.js';
 import * as active from '../active.js';
 import * as timer from '../timer.js';
 import { weekSummary } from '../lib/calc.js';
+import { nextTemplate } from '../lib/templates.js';
+import { plateaus } from '../lib/stats.js';
 import { fmtNum, fmtRelativeDay, fmtClock, count } from '../lib/format.js';
 import { SAMPLE_TEMPLATES } from '../lib/exercises-data.js';
+
+// Läuft die App in Safari statt als Home-Bildschirm-App? (Getrennte Daten!)
+const IS_IOS = typeof navigator !== 'undefined' &&
+  (/iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+const IS_STANDALONE = typeof window !== 'undefined' &&
+  (window.navigator.standalone === true || window.matchMedia?.('(display-mode: standalone)').matches);
+
+function safariHint() {
+  try { if (localStorage.getItem('gt-safari-hint') === 'seen') return null; } catch { /* egal */ }
+  const card = h('div', { class: 'card hint warn' },
+    icon('import'),
+    h('span', null, h('strong', null, 'Bitte vom Home-Bildschirm öffnen'), h('br'),
+      'In Safari speichert die App getrennt – deine Daten liegen in der Home-Bildschirm-App. Noch nicht installiert? Teilen → „Zum Home-Bildschirm“.'),
+    h('button', {
+      class: 'icon-btn', 'aria-label': 'Hinweis ausblenden',
+      onclick: () => { try { localStorage.setItem('gt-safari-hint', 'seen'); } catch { /* egal */ } card.remove(); },
+    }, icon('close')));
+  return card;
+}
 
 /** Training starten (aus Vorlage oder leer). Fragt nach, falls schon eins läuft. */
 export async function startWorkout(template = null) {
@@ -40,7 +61,9 @@ export async function homeView() {
   for (const w of workouts) if (w.templateId && !lastUse.has(w.templateId)) lastUse.set(w.templateId, w.startedAt);
 
   const body = h('div', { class: 'page' });
+  if (IS_IOS && !IS_STANDALONE) body.append(safariHint());
 
+  const next = !act ? nextTemplate(templates, workouts) : null;
   if (act) {
     body.append(h('button', { class: 'card active-card', onclick: () => navigate('/workout') },
       h('div', { class: 'active-card-text' },
@@ -48,6 +71,16 @@ export async function homeView() {
         h('strong', null, act.name),
         h('span', { class: 'muted' }, `seit ${fmtClock((Date.now() - act.startedAt) / 1000)} · ${count(act.exercises.length, 'Übung', 'Übungen')}`)),
       h('span', { class: 'btn primary small' }, 'Fortsetzen')));
+  } else if (next) {
+    // Nächstes Training in der Rotation (am längsten nicht trainierte Vorlage)
+    body.append(h('div', { class: 'card next-card' },
+      h('div', { class: 'active-card-text' },
+        h('span', { class: 'eyebrow' }, 'Als Nächstes'),
+        h('strong', null, next.template.name),
+        h('span', { class: 'muted small' }, (next.last ? `zuletzt ${fmtRelativeDay(next.last)} · ` : '') +
+          count(next.template.exercises.length, 'Übung', 'Übungen'))),
+      h('button', { class: 'btn primary', onclick: () => startWorkout(next.template) }, icon('play', { size: 20 }), 'Start')),
+    h('button', { class: 'btn secondary block', onclick: () => startWorkout(null) }, icon('plus'), 'Leeres Training starten'));
   } else {
     body.append(h('button', { class: 'btn primary block big', onclick: () => startWorkout(null) }, icon('plus'), 'Leeres Training starten'));
   }
@@ -58,6 +91,25 @@ export async function homeView() {
       h('span', { class: 'stat-value' }, `${week.count} / ${weeklyGoal}`, week.count >= weeklyGoal ? ' ✓' : ''),
       h('div', { class: 'meter small' }, h('div', { class: 'meter-fill' + (week.count >= weeklyGoal ? ' met' : ''), style: { width: Math.min(100, (week.count / weeklyGoal) * 100) + '%' } }))),
     h('div', { class: 'stat' }, h('span', { class: 'stat-label' }, 'Volumen diese Woche'), h('span', { class: 'stat-value' }, fmtNum(week.volume, 0) + ' kg'))));
+
+  // Plateau-Hinweise (ausblendbar für 3 Wochen)
+  const hidden = await repo.getMeta('plateauHidden', {});
+  const stuck = plateaus(workouts).filter((p) => !(hidden[p.exerciseId] > Date.now())).slice(0, 2);
+  for (const p of stuck) {
+    const card = h('div', { class: 'card hint plateau' },
+      icon('chart'),
+      h('button', { class: 'hint-text', onclick: () => navigate('/exercises/' + p.exerciseId) },
+        h('strong', null, repo.exerciseName(p.exerciseId)), h('br'),
+        `Seit ${count(p.weeks, 'Woche', 'Wochen')} kein neuer Bestwert. Tipp: Wdh.-Ziel setzen, Gewicht/Wdh. variieren oder Übung tauschen.`),
+      h('button', {
+        class: 'icon-btn', 'aria-label': 'Hinweis ausblenden',
+        onclick: async () => {
+          await repo.setMeta('plateauHidden', { ...hidden, [p.exerciseId]: Date.now() + 21 * 86400000 });
+          card.remove();
+        },
+      }, icon('close')));
+    body.append(card);
+  }
 
   if (workouts.length >= 5 && (!lastBackupAt || Date.now() - lastBackupAt > 14 * 86400000)) {
     body.append(h('button', { class: 'card hint', onclick: () => navigate('/settings') },

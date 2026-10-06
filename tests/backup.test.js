@@ -87,3 +87,16 @@ test('planBackupImport: Zusammenführen vs. Ersetzen', () => {
 test('backupFileName', () => {
   assert.equal(backupFileName(new Date(2026, 9, 1).getTime()), 'gymtracker-backup-2026-10-01.json');
 });
+
+test('Backup enthält Körpermaße und Supersätze', () => {
+  const data = {
+    exercises: [], templates: [{ id: 't', name: 'Pull', order: 0, exercises: [{ exerciseId: 'a', sets: 3, group: 'g1' }, { exerciseId: 'b', sets: 3, group: 'g1' }] }],
+    workouts: [{ id: 'w', name: 'Pull', templateId: 't', startedAt: 1, endedAt: null, notes: '', exercises: [{ exerciseId: 'a', notes: '', group: 'g1', sets: [{ weight: -20, reps: 8, bw: 82, rpe: 8.5 }] }] }],
+    settings: {}, measurements: [{ id: 'm1', date: 5, bodyweight: 82.5, waist: 85 }, { id: 'kaputt', date: 6 }],
+  };
+  const p = parseBackup(serializeBackup(createBackup(data)));
+  assert.deepEqual(p.measurements, [{ id: 'm1', date: 5, bodyweight: 82.5, waist: 85 }]);
+  assert.equal(p.invalid, 1);
+  assert.deepEqual(p.templates[0].exercises.map((e) => e.group), ['g1', 'g1']);
+  assert.deepEqual(p.workouts[0].exercises[0], data.workouts[0].exercises[0]);
+});

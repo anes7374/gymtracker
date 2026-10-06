@@ -38,19 +38,26 @@ export function clear(el) {
 }
 
 let toastTimer = null;
-/** Kurze Meldung am unteren Rand. */
-export function toast(message, { duration = 2600, kind = '' } = {}) {
+/**
+ * Kurze Meldung am unteren Rand. Mit `action` ({ label, onClick }) bekommt sie
+ * einen Knopf (z. B. „Rückgängig“) und bleibt etwas länger stehen.
+ */
+export function toast(message, { duration, kind = '', action = null } = {}) {
   const root = document.getElementById('toast-root');
   if (!root) return;
   clear(root);
-  const t = h('div', { class: 'toast ' + kind, role: 'status' }, message);
+  const hide = () => {
+    clearTimeout(toastTimer);
+    t.classList.remove('show');
+    setTimeout(() => t.remove(), 300);
+  };
+  const t = h('div', { class: 'toast ' + kind + (action ? ' has-action' : ''), role: 'status' },
+    h('span', null, message),
+    action ? h('button', { class: 'toast-action', onclick: () => { hide(); action.onClick(); } }, action.label) : null);
   root.append(t);
   requestAnimationFrame(() => t.classList.add('show'));
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => {
-    t.classList.remove('show');
-    setTimeout(() => t.remove(), 300);
-  }, duration);
+  toastTimer = setTimeout(hide, duration ?? (action ? 5000 : 2600));
 }
 
 /** Markiert alle Zeichen beim Fokussieren (schnelles Überschreiben von Zahlen). */

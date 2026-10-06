@@ -9,7 +9,9 @@
 import { h, clear } from '../ui/dom.js';
 import { icon } from '../ui/icons.js';
 import { lineChart, barChart, sparkline } from '../ui/chart.js';
-import { navigate } from '../router.js';
+import { navigate, refresh } from '../router.js';
+import { assignCategoriesSheet } from '../ui/exercise-settings.js';
+import { measureSeries, latestMeasure } from '../lib/body.js';
 import * as repo from '../repo.js';
 import { computeAllPRs, setMetrics } from '../lib/calc.js';
 import {
@@ -51,6 +53,7 @@ export async function progressView() {
   }
 
   const prInfo = computeAllPRs(workouts);
+  const measurements = await repo.measurements();
   const index = strengthIndex(workouts);
   const oldest = workouts[workouts.length - 1].startedAt;
 
@@ -78,6 +81,8 @@ export async function progressView() {
       muscleCard(workouts, from, to),
       trendsCard(workouts, from, to),
       prsCard(workouts, prInfo, from),
+      bodyCard(measurements, from),
+      yearCard(workouts),
     );
   };
   render();
@@ -191,8 +196,46 @@ function muscleCard(workouts, from, to) {
     h('div', { class: 'mg-legend muted small' },
       h('span', { class: 'mg-swatch' }), `Richtwert für Muskelaufbau: ca. ${GUIDE[0]}–${GUIDE[1]} Sätze pro Woche`),
     h('p', { class: 'muted small card-note' },
-      'Gezählt wird die Hauptmuskelgruppe jeder Übung.' +
-      (rows.some((r) => r.category === 'Sonstige') ? ' „Sonstige“ = eigene Übungen ohne Muskelgruppe – ändern unter Übungen → Übung → ⋯ → Bearbeiten.' : '')));
+      'Gezählt wird die Hauptmuskelgruppe jeder Übung.'),
+    rows.some((r) => r.category === 'Sonstige')
+      ? h('button', { class: 'btn secondary block', onclick: async () => { if (await assignCategoriesSheet()) refresh(); } },
+        icon('list', { size: 20 }), '„Sonstige“ Muskelgruppen zuordnen')
+      : null);
+}
+
+// --- Körpergewicht --------------------------------------------------------------------
+
+function bodyCard(entries, from) {
+  const last = latestMeasure(entries, 'bodyweight');
+  if (!last) {
+    return h('button', { class: 'card hint', onclick: () => navigate('/body') },
+      icon('chart'),
+      h('span', null, h('strong', null, 'Körpergewicht & Maße'), h('br'), 'Trag dein Gewicht ein, um den Verlauf neben deinem Kraftfortschritt zu sehen.'),
+      icon('chevron'));
+  }
+  const pts = measureSeries(entries, 'bodyweight', { since: from });
+  const change = pts.length > 1 ? pts[pts.length - 1].y - pts[0].y : null;
+  return h('button', { class: 'card body-card', onclick: () => navigate('/body') },
+    h('div', { class: 'trend-text' },
+      h('span', { class: 'stat-label' }, 'Körpergewicht'),
+      h('strong', { class: 'stat-value' }, `${fmtNum(last.bodyweight, 1)} kg`),
+      h('span', { class: 'muted small' }, change != null
+        ? `${change > 0 ? '+' : change < 0 ? '−' : '±'}${fmtNum(Math.abs(change), 1)} kg ${RANGE_TEXT[state.range]}`
+        : `zuletzt ${fmtRelativeDay(last.date)}`)),
+    pts.length > 1 ? sparkline(pts.map((p) => p.y), { width: 96, height: 36 }) : null,
+    icon('chevron', { size: 20, cls: 'muted' }));
+}
+
+// --- Jahresrückblick ------------------------------------------------------------------
+
+function yearCard(workouts) {
+  const thisYear = new Date().getFullYear();
+  const years = [...new Set(workouts.map((w) => new Date(w.startedAt).getFullYear()))].sort((a, b) => b - a);
+  const year = years.includes(thisYear) ? thisYear : years[0];
+  return h('button', { class: 'card hint year-link', onclick: () => navigate('/year/' + year) },
+    icon('calendar'),
+    h('span', null, h('strong', null, `Jahresrückblick ${year}`), h('br'), 'Dein Trainingsjahr in Zahlen – Trainings, Stunden, größter Fortschritt.'),
+    icon('chevron'));
 }
 
 // --- Trends je Übung ----------------------------------------------------------------

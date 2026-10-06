@@ -35,9 +35,14 @@ export function isCountable(set) {
 export function effectiveLoad(set) {
   const w = set.weight;
   if (w > 0) return w;
-  if (w < 0 && calcConfig.bodyweight) return Math.max(0, calcConfig.bodyweight + w);
+  // set.bw = Körpergewicht zum Zeitpunkt des Trainings (beim Speichern gesetzt)
+  const bw = set.bw ?? calcConfig.bodyweight;
+  if (w < 0 && bw) return Math.max(0, bw + w);
   return 0;
 }
+
+/** Bis zu dieser Wiederholungszahl gilt die 1RM-Schätzung als verlässlich. */
+export const RELIABLE_REPS = 12;
 
 /**
  * Kennzahlen eines einzelnen Satzes; null = für diesen Satz nicht sinnvoll.
@@ -60,7 +65,7 @@ export function setMetrics(set) {
 
 /** Zusammenfassung aller Sätze einer Übung in einem Training. */
 export function sessionStats(sets) {
-  let maxWeight = 0, best1RM = 0, volume = 0, bestSetVolume = 0, maxReps = 0, count = 0;
+  let maxWeight = 0, best1RM = 0, best1RMLow = 0, volume = 0, bestSetVolume = 0, maxReps = 0, count = 0;
   let heaviestSet = null, hasWeight = false;
   for (const s of sets || []) {
     if (!isCountable(s)) continue;
@@ -72,11 +77,16 @@ export function sessionStats(sets) {
       maxWeight = w;
       heaviestSet = s;
     }
-    if (m.e1rm != null) best1RM = Math.max(best1RM, m.e1rm);
+    if (m.e1rm != null) {
+      best1RM = Math.max(best1RM, m.e1rm);
+      if (s.reps <= RELIABLE_REPS) best1RMLow = Math.max(best1RMLow, m.e1rm);
+    }
     if (m.volume != null) { bestSetVolume = Math.max(bestSetVolume, m.volume); volume += m.volume; }
     if (m.reps != null) maxReps = Math.max(maxReps, m.reps);
   }
-  return { count, maxWeight, best1RM, volume, bestSetVolume, maxReps, heaviestSet, hasWeight };
+  // Für Kurven und Trends: nur Sätze bis RELIABLE_REPS Wdh. (genauer), sonst alle
+  const best1RMReliable = best1RMLow > 0 ? best1RMLow : best1RM;
+  return { count, maxWeight, best1RM, best1RMReliable, volume, bestSetVolume, maxReps, heaviestSet, hasWeight };
 }
 
 /** Gesamtvolumen (kg) eines Trainings. */
@@ -320,11 +330,13 @@ export function matchPrevious(sets, prevSets = []) {
  * (mehr Sätze als letztes Mal oder neue Übung), der vorherige Satz dieses
  * Trainings (bzw. dessen Vorschlag).
  */
-export function setSuggestions(sets, prevSets = []) {
+export function setSuggestions(sets, prevSets = [], { progression = null } = {}) {
   const prev = matchPrevious(sets, prevSets);
   const res = [];
   sets.forEach((s, i) => {
     const isWarm = s.type === 'warmup';
+    // Progression: Arbeitssätze bekommen das neue Zielgewicht und das untere Wdh.-Ende
+    if (progression && !isWarm) { res.push({ weight: progression.weight, reps: progression.reps }); return; }
     let j = i - 1;
     while (j >= 0 && (sets[j].type === 'warmup') !== isWarm) j--;
     const out = {};
@@ -334,4 +346,43 @@ export function setSuggestions(sets, prevSets = []) {
     res.push(out);
   });
   return res;
+}
+
+/**
+ * Doppelte Progression: Haben beim letzten Mal ALLE Arbeitssätze das obere Ende
+ * des Wiederholungsbereichs erreicht, steigt das Gewicht um einen Schritt (bei
+ * Unterstützung: weniger Hilfe, höchstens bis 0) und die Wiederholungen beginnen
+ * wieder unten. Sonst null (= wie letztes Mal weitermachen).
+ */
+export function progressionTarget(lastSets, range, step) {
+  if (!range || !(step > 0)) return null;
+  const [min, max] = range;
+  const work = (lastSets || []).filter(isCountable);
+  if (!work.length || !work.every((s) => s.reps >= max)) return null;
+  const top = Math.max(...work.map((s) => s.weight ?? 0));
+  if (top === 0) return null; // reines Körpergewicht: kein Gewicht zum Steigern
+  let weight = Math.round((top + step) * 100) / 100;
+  if (top < 0) weight = Math.min(weight, 0) || 0;
+  return { weight, reps: min, from: top };
+}
+
+/**
+ * Vergleich eines Satzes mit dem passenden Satz vom letzten Mal:
+ * 1 = besser, 0 = gleich, −1 = schwächer, null = kein Vergleich möglich.
+ * - gleiches Gewicht: mehr Wiederholungen = besser
+ * - mehr Gewicht (bei Hilfe: weniger Hilfe): besser, solange die Wiederholungen
+ *   im Zielbereich bleiben (ohne Bereich: 1RM höchstens 10 % niedriger) – so ist
+ *   der Sprung nach oben bei doppelter Progression ein ▲, kein ▼
+ * - weniger Gewicht: nur besser, wenn das geschätzte 1RM höher ist
+ */
+export function compareToPrevious(cur, prev, range = null) {
+  if (!cur || !prev || !isCountable(cur) || !(prev.reps > 0)) return null;
+  const wa = cur.weight ?? 0, wb = prev.weight ?? 0;
+  if (Math.abs(wa - wb) < EPS) return Math.sign(cur.reps - prev.reps);
+  const a = setMetrics(cur).e1rm, b = setMetrics(prev).e1rm;
+  if (wa > wb) {
+    if (range) return cur.reps >= range[0] ? 1 : -1;
+    return a == null || b == null || a >= b * 0.9 ? 1 : -1;
+  }
+  return a != null && b != null && a > b + EPS ? 1 : -1;
 }

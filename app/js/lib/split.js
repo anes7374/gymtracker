@@ -11,7 +11,7 @@ export function splitFromTemplates(templates) {
   return templates.map((t) => ({
     key: 't:' + t.id,
     name: t.name,
-    exercises: t.exercises.map((e) => ({ exerciseId: e.exerciseId, sets: e.sets })),
+    exercises: t.exercises.map((e) => ({ exerciseId: e.exerciseId, sets: e.sets, ...(e.group ? { group: e.group } : {}) })),
   }));
 }
 
@@ -60,9 +60,12 @@ export function buildSplitText(days, { nameOf, showSets = true, perWeek = null, 
   const lines = [title];
   for (const d of days) {
     lines.push('', d.name);
+    const letters = new Map();
     d.exercises.forEach((e, i) => {
       const sets = showSets && e.sets > 0 ? ` – ${e.sets} ${e.sets === 1 ? 'Satz' : 'Sätze'}` : '';
-      lines.push(`${i + 1}. ${nameOf(e.exerciseId)}${sets}`);
+      if (e.group && !letters.has(e.group)) letters.set(e.group, String.fromCharCode(65 + letters.size));
+      const ss = e.group ? ` (Supersatz ${letters.get(e.group)})` : '';
+      lines.push(`${i + 1}. ${nameOf(e.exerciseId)}${sets}${ss}`);
     });
   }
   if (perWeek != null) lines.push('', `Trainingsfrequenz: Ø ${fmtNum(perWeek, 1)} Trainings pro Woche`);

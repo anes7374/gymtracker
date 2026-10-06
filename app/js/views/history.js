@@ -7,7 +7,7 @@ import { navigate, back } from '../router.js';
 import * as repo from '../repo.js';
 import { startWorkout } from './home.js';
 import { computeAllPRs, sessionStats, workoutVolume, workoutSetCount, setMetrics, prLabel } from '../lib/calc.js';
-import { monthGrid, workoutsByDay, countsByWeek, dayKey, startOfWeek, periodSummary } from '../lib/stats.js';
+import { monthGrid, workoutsByDay, countsByWeek, dayKey, startOfWeek, periodSummary, workoutTypeColors } from '../lib/stats.js';
 import { fmtDate, fmtTime, fmtDuration, fmtMonth, fmtNum, fmtSet, count } from '../lib/format.js';
 
 const PAGE = 40;
@@ -21,6 +21,7 @@ export async function historyView() {
   const workouts = await repo.workouts();
   const prs = computeAllPRs(workouts);
   const { weeklyGoal } = await repo.settings();
+  const templates = await repo.templates();
   const body = h('div', { class: 'page' });
   const addBtn = h('button', {
     class: 'icon-btn', 'aria-label': 'Training nachtragen',
@@ -48,7 +49,7 @@ export async function historyView() {
         onclick: () => { histState.mode = mode; render(); },
       }, label));
     }
-    clear(content).append(histState.mode === 'calendar' ? calendarView(workouts, prs, weeklyGoal) : listView(workouts, prs));
+    clear(content).append(histState.mode === 'calendar' ? calendarView(workouts, prs, weeklyGoal, templates) : listView(workouts, prs));
   };
   render();
   body.append(seg, content);
@@ -81,7 +82,7 @@ function listView(workouts, prs) {
   return wrap;
 }
 
-function calendarView(workouts, prs, goal) {
+function calendarView(workouts, prs, goal, templates) {
   const now = Date.now();
   const thisYear = new Date(now).getFullYear();
   const thisMonth = new Date(now).getMonth();
@@ -89,6 +90,14 @@ function calendarView(workouts, prs, goal) {
   const byDay = workoutsByDay(workouts);
   const weekCounts = countsByWeek(workouts);
   const prDays = new Set(workouts.filter((w) => prs.get(w.id)?.count).map((w) => dayKey(w.startedAt)));
+  // Farbe je Trainingsart (z. B. Push/Pull/Beine), Rest grau
+  const types = workoutTypeColors(workouts, templates, { now });
+  const typeClass = (list) => {
+    if (!list.length) return null;
+    const slot = types.slotOf(list[0].name);
+    return slot == null ? 'type-other' : 'type-' + slot;
+  };
+  const hasOther = workouts.some((w) => types.slotOf(w.name) == null);
   const todayKey = dayKey(now);
   const wrap = h('div', { class: 'calendar-view' });
 
@@ -120,12 +129,13 @@ function calendarView(workouts, prs, goal) {
         const cls = ['cal-day',
           new Date(ts).getMonth() !== month && 'out',
           list.length && 'trained',
+          typeClass(list),
           k === todayKey && 'today',
           k === histState.selected && 'selected',
           ts > now && 'future'].filter(Boolean).join(' ');
         grid.append(h('button', {
           class: cls,
-          'aria-label': fmtDate(ts) + (list.length ? ', ' + count(list.length, 'Training', 'Trainings') : '') + (prDays.has(k) ? ', Rekord' : ''),
+          'aria-label': fmtDate(ts) + (list.length ? ', ' + list.map((w) => w.name).join(', ') : '') + (prDays.has(k) ? ', Rekord' : ''),
           'aria-pressed': String(k === histState.selected),
           onclick: () => { histState.selected = histState.selected === k ? null : k; render(); },
         },
@@ -164,13 +174,14 @@ function calendarView(workouts, prs, goal) {
           h('button', { class: 'icon-btn', 'aria-label': 'Nächster Monat', disabled: isCurrentMonth(), onclick: () => shift(1) }, icon('chevron'))),
         grid,
         h('div', { class: 'cal-legend muted small' },
-          h('span', { class: 'lg-item' }, h('span', { class: 'lg-dot trained' }), 'Training'),
+          types.legend.map((t) => h('span', { class: 'lg-item' }, h('span', { class: 'lg-dot type-' + t.slot }), t.name)),
+          hasOther || !types.legend.length ? h('span', { class: 'lg-item' }, h('span', { class: 'lg-dot type-other' }), types.legend.length ? 'Andere' : 'Training') : null,
           h('span', { class: 'lg-item' }, h('span', { class: 'lg-dot pr' }), 'Rekord'),
           h('span', { class: 'lg-item' }, `Wo = Trainings/Woche, grün ab ${goal}`))),
       h('div', { class: 'stat-row month-stats' },
         mini('Trainings', fmtNum(sum.count, 0)),
         mini('Zeit', sum.duration ? `${fmtNum(sum.duration / 3600000, 1)} h` : '–'),
-        mini('Volumen', sum.volume >= 10000 ? `${fmtNum(sum.volume / 1000, 1)} t` : `${fmtNum(sum.volume, 0)} kg`),
+        mini('Volumen', sum.volume >= 1000 ? `${fmtNum(sum.volume / 1000, 1)} t` : `${fmtNum(sum.volume, 0)} kg`),
         mini('Rekorde', fmtNum(sum.prs, 0))),
       h('h2', { class: 'month-head' }, sel ? fmtDate(fromKey(sel)) : `Trainings im ${monthName.split(' ')[0]}`),
       ...(shown.length
@@ -220,11 +231,19 @@ export async function workoutDetailView(id) {
       stat('PRs', String(prInfo.count))),
     w.notes ? h('p', { class: 'notes-text' }, w.notes) : null));
 
+  // Supersätze: A, B, … in Reihenfolge
+  const letters = new Map();
+  const letterFor = (g) => {
+    if (!letters.has(g)) letters.set(g, String.fromCharCode(65 + letters.size));
+    return letters.get(g);
+  };
+
   w.exercises.forEach((e, ei) => {
     const prs = prInfo.byExercise[ei] || [];
     let n = 0;
     body.append(h('section', { class: 'card ex-card readonly' },
       h('div', { class: 'ex-head' },
+        e.group ? h('span', { class: 'superset-tag', title: 'Supersatz' }, letterFor(e.group)) : null,
         h('button', { class: 'ex-name', onclick: () => navigate('/exercises/' + e.exerciseId) }, repo.exerciseName(e.exerciseId)),
         icon('chevron', { size: 20, cls: 'muted' })),
       e.notes ? h('p', { class: 'notes-text' }, e.notes) : null,
@@ -234,7 +253,7 @@ export async function workoutDetailView(id) {
         const types = prs[si] || [];
         return h('div', { class: 'detail-set' + (s.type === 'warmup' ? ' warmup' : '') + (types.length ? ' pr' : '') },
           h('span', { class: 'set-num static' }, label),
-          h('span', { class: 'ds-main' }, fmtSet(s)),
+          h('span', { class: 'ds-main' }, fmtSet(s), s.rpe ? h('span', { class: 'rpe-inline' }, ` @${fmtNum(s.rpe)}`) : null),
           h('span', { class: 'ds-sub muted' }, e1 ? `1RM ${fmtNum(e1, 1)}` : ''),
           types.length ? h('span', { class: 'ds-pr', title: types.map((t) => prLabel(t, repo.exercise(e.exerciseId))).join(', ') }, icon('trophy', { size: 18 })) : h('span'));
       })));

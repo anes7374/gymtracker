@@ -4,17 +4,20 @@ import { h, clear, toast, selectOnFocus } from '../ui/dom.js';
 import { icon } from '../ui/icons.js';
 import { actionSheet, confirmDialog } from '../ui/sheets.js';
 import { pickExercises } from '../ui/picker.js';
+import { exerciseSettingsSheet, restFor } from '../ui/exercise-settings.js';
 import { navigate, back } from '../router.js';
 import * as repo from '../repo.js';
 import * as active from '../active.js';
 import * as timer from '../timer.js';
+import { keepAwake } from '../wakelock.js';
 import { uid } from '../lib/uid.js';
 import {
-  lastPerformance, bestsForExercise, detectSetPRs, computeAllPRs, prLabel, setMetrics, inferWeightStep, WEIGHT_STEPS,
-  matchPrevious, setSuggestions,
+  lastPerformance, bestsForExercise, detectSetPRs, prLabel, setMetrics, inferWeightStep,
+  matchPrevious, setSuggestions, progressionTarget, compareToPrevious, sessionStats,
 } from '../lib/calc.js';
+import { mergeTemplate, normalizeGroups, groupMembers } from '../lib/templates.js';
 import {
-  parseNumber, fmtNum, fmtSet, fmtWeightInput, fmtClock, fmtDateTiny, toDateTimeLocal, fromDateTimeLocal, round,
+  parseNumber, fmtNum, fmtSet, fmtWeightInput, fmtClock, fmtDateTiny, toDateTimeLocal, fromDateTimeLocal, round, count,
 } from '../lib/format.js';
 
 export async function activeWorkoutView() {
@@ -30,6 +33,7 @@ export async function editWorkoutView(id) {
 }
 
 const SET_LABEL = { warmup: 'W', drop: 'D', failure: 'F' };
+const RPE_VALUES = [6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10];
 
 /** Vergessenes Training für einen vergangenen Tag nachtragen (day = "2026-10-01"). */
 export async function addWorkoutView(day) {
@@ -40,6 +44,12 @@ export async function addWorkoutView(day) {
   return editorView(w, 'edit', { isNew: true });
 }
 
+/** Supersatz-Gruppen in der Liste bereinigen (ohne die Objekte zu ersetzen). */
+function fixGroups(list) {
+  const norm = normalizeGroups(list);
+  list.forEach((e, i) => { if (norm[i].group) e.group = norm[i].group; else delete e.group; });
+}
+
 async function editorView(w, mode, { isNew = false } = {}) {
   const isActive = mode === 'active';
   let settings = await repo.settings();
@@ -47,6 +57,7 @@ async function editorView(w, mode, { isNew = false } = {}) {
   const beforeTs = isActive ? Infinity : w.startedAt;
   let dirty = false;
   const changed = () => { dirty = true; if (isActive) active.changed(); };
+  if (isActive) keepAwake(settings.keepAwake);
 
   // Letztes Mal + bisherige Bestwerte je Übung (einmal berechnet)
   const infoCache = new Map();
@@ -96,27 +107,52 @@ async function editorView(w, mode, { isNew = false } = {}) {
   const list = h('div', { class: 'ex-list' });
   // Der „aktuelle Satz“ bekommt die +/−-Knöpfe. Es gibt genau einen im ganzen
   // Training; nach dem Abhaken springt er zum nächsten offenen Satz.
-  const cardApis = new Map(); // entry -> Steuerung der Karte
+  const cardApis = new Map(); // entry -> Steuerung der (aktuellen) Karte
   let current = null;         // { entry, idx }
 
   function activate(entry, idx) {
     if (current && current.entry !== entry) cardApis.get(current.entry)?.deactivate();
+    if (entry.collapsed) { entry.collapsed = false; cardApis.get(entry)?.rerender(); }
     const api = cardApis.get(entry);
     if (!api || idx < 0) { current = null; return; }
     current = { entry, idx };
     api.activate(idx);
   }
 
-  /** Nächster offener Satz in dieser Übung, sonst in den folgenden Übungen. */
-  function advanceFrom(entry) {
-    const start = Math.max(0, w.exercises.indexOf(entry));
-    for (let k = 0; k < w.exercises.length; k++) {
-      const e = w.exercises[(start + k) % w.exercises.length];
+  /** Nächster offener Satz ab Übung `start` (Index), sonst in den folgenden Übungen. */
+  function advanceFromIndex(start) {
+    const n = w.exercises.length;
+    for (let k = 0; k < n; k++) {
+      const e = w.exercises[(start + k) % n];
       const i = e.sets.findIndex((s) => !s.done);
       if (i !== -1) { activate(e, i); return; }
     }
     if (current) cardApis.get(current.entry)?.deactivate();
     current = null;
+  }
+  const advanceFrom = (entry) => advanceFromIndex(Math.max(0, w.exercises.indexOf(entry)));
+
+  /**
+   * Nach dem Abhaken weiter: Im Supersatz zur nächsten Übung der Gruppe
+   * (abwechselnd), sonst zum nächsten offenen Satz. Rückgabe: ob jetzt Pause ist.
+   */
+  function advanceAfterDone(entry) {
+    const members = groupMembers(w.exercises, entry);
+    if (members.length > 1) {
+      const k = members.indexOf(entry);
+      for (let step = 1; step <= members.length; step++) {
+        const m = members[(k + step) % members.length];
+        const j = m.sets.findIndex((s) => !s.done);
+        if (j === -1) continue;
+        activate(m, j);
+        // Pause erst, wenn die Runde durch ist (zurück am Anfang der Gruppe)
+        return members.indexOf(m) <= k;
+      }
+      advanceFromIndex(w.exercises.indexOf(members[members.length - 1]) + 1);
+      return true;
+    }
+    advanceFrom(entry);
+    return true;
   }
 
   function renderAll() {
@@ -127,7 +163,11 @@ async function editorView(w, mode, { isNew = false } = {}) {
     if (!w.exercises.length) {
       list.append(h('div', { class: 'empty' }, h('p', null, 'Noch keine Übungen. Füge die erste hinzu.')));
     }
-    for (const entry of w.exercises) list.append(makeCard(entry));
+    const letters = new Map();
+    for (const entry of w.exercises) {
+      if (entry.group && !letters.has(entry.group)) letters.set(entry.group, String.fromCharCode(65 + letters.size));
+      list.append(makeCard(entry, letters.get(entry.group)));
+    }
     if (keep && w.exercises.includes(keep.entry) && keep.idx < keep.entry.sets.length) activate(keep.entry, keep.idx);
     else if (isActive && w.exercises.length) advanceFrom(w.exercises[0]);
   }
@@ -135,27 +175,13 @@ async function editorView(w, mode, { isNew = false } = {}) {
   /** Gewichtsschritt einer Übung: eigene Einstellung, sonst aus dem Verlauf gelernt. */
   const weightStep = (exerciseId) => settings.weightSteps?.[exerciseId] ?? info(exerciseId).autoStep;
 
-  async function chooseWeightStep(entry) {
-    const id = entry.exerciseId;
-    const cur = weightStep(id);
-    const auto = info(id).autoStep;
-    const manual = settings.weightSteps?.[id] != null;
-    const choice = await actionSheet({
-      title: 'Gewichtsschritt für +/−',
-      message: `${repo.exerciseName(id)} · aus deinem Verlauf: ${fmtNum(auto)} kg`,
-      items: [
-        ...WEIGHT_STEPS.map((v) => ({ label: `${fmtNum(v)} kg${v === cur ? '  ✓' : ''}`, value: v })),
-        manual ? { label: 'Automatisch (aus Verlauf)', value: 'auto', icon: 'restart' } : null,
-      ],
-    });
-    if (choice == null) return;
-    const steps = { ...(settings.weightSteps || {}) };
-    if (choice === 'auto') delete steps[id]; else steps[id] = choice;
-    settings = await repo.setSetting('weightSteps', steps);
-    cardApis.get(entry)?.refreshStepper();
+  async function openSettings(entry) {
+    await exerciseSettingsSheet(entry.exerciseId);
+    settings = await repo.settings();
+    cardApis.get(entry)?.rerender();
   }
 
-  function makeCard(entry) {
+  function makeCard(entry, groupLetter) {
     const ex = repo.exercise(entry.exerciseId);
     // Unterstützte Übung (Maschine/Band): Hilfe = negatives Gewicht. Getippt wird
     // die Zahl von der Maschine (iOS-Zahlenfeld hat kein Minus), gespeichert −Zahl.
@@ -164,21 +190,43 @@ async function editorView(w, mode, { isNew = false } = {}) {
     const storeW = (n) => (n == null ? null : assisted ? (n === 0 ? 0 : -Math.abs(n)) : n);
     const { last, bests } = info(entry.exerciseId);
     const prevSets = last ? last.entry.sets : [];
+    const range = settings.repRanges?.[entry.exerciseId] || null;
+    // Doppelte Progression: alles oben im Bereich geschafft -> heute mehr Gewicht
+    const progression = isActive ? progressionTarget(prevSets, range, weightStep(entry.exerciseId)) : null;
     // Vorwerte zuordnen: Aufwärmsatz zu Aufwärmsatz, Arbeitssatz zu Arbeitssatz.
     const prevMatched = matchPrevious(entry.sets, prevSets);
     const rows = [];
-    const card = h('section', { class: 'card ex-card' });
+    const card = h('section', { class: 'card ex-card' + (entry.group ? ' superset' : '') });
     const prLine = h('div', { class: 'pr-line', hidden: true });
 
     const rerender = () => {
       const wasIdx = current?.entry === entry ? current.idx : -1;
-      const fresh = makeCard(entry);
+      const fresh = makeCard(entry, groupLetter);
       card.replaceWith(fresh);
       if (wasIdx === -1) return;
       const s = entry.sets[wasIdx];
       if (s && !s.done) activate(entry, wasIdx);
       else advanceFrom(entry);
     };
+
+    // Erledigte Übung eingeklappt: nur Name + Kurzfassung
+    if (entry.collapsed && isActive) {
+      const st = sessionStats(entry.sets.filter((s) => s.done));
+      const prs = detectSetPRs(entry.sets, bests).filter((p) => p.length).length;
+      card.classList.add('collapsed');
+      card.append(h('button', {
+        class: 'ex-collapsed', 'aria-expanded': 'false',
+        onclick: () => { entry.collapsed = false; changed(); rerender(); },
+      },
+      h('span', { class: 'ex-done-icon' }, icon('check', { size: 18 })),
+      h('span', { class: 'ex-collapsed-text' },
+        h('strong', null, repo.exerciseName(entry.exerciseId)),
+        h('span', { class: 'muted small' }, `${count(st.count, 'Satz', 'Sätze')}` + (st.heaviestSet ? ` · bester ${fmtSet(st.heaviestSet)}` : ''))),
+      prs ? h('span', { class: 'pr-badge' }, icon('trophy', { size: 14 }), String(prs)) : null,
+      icon('down', { size: 20, cls: 'muted' })));
+      cardApis.set(entry, { activate() {}, deactivate() {}, refreshStepper() {}, rerender });
+      return card;
+    }
 
     // +/−-Knöpfe: Antippen = ein Schritt, Halten wiederholt
     const repeatBtn = (label, aria, fn) => {
@@ -197,7 +245,7 @@ async function editorView(w, mode, { isNew = false } = {}) {
       }, label);
     };
     let activeIdx = -1;
-    const stepLabel = h('button', { class: 'stp-label', 'aria-label': 'Gewichtsschritt ändern', onclick: () => chooseWeightStep(entry) });
+    const stepLabel = h('button', { class: 'stp-label', 'aria-label': 'Gewichtsschritt ändern', onclick: () => openSettings(entry) });
     const stepper = h('div', { class: 'set-stepper' },
       h('div', { class: 'stp-group' },
         repeatBtn('−', 'Gewicht verringern', () => bump('weight', -1)),
@@ -238,7 +286,7 @@ async function editorView(w, mode, { isNew = false } = {}) {
         activeIdx = i;
         rows.forEach((r, j) => r.row.classList.toggle('active', j === i));
         refreshStepper();
-        rows[i].row.after(stepper);
+        rows[i]?.row.after(stepper);
       },
       deactivate() {
         activeIdx = -1;
@@ -246,14 +294,24 @@ async function editorView(w, mode, { isNew = false } = {}) {
         stepper.remove();
       },
       refreshStepper,
+      rerender,
     });
 
     // Kopf
     card.append(h('div', { class: 'ex-head' },
+      groupLetter ? h('span', { class: 'superset-tag', title: 'Supersatz' }, groupLetter) : null,
       h('button', {
         class: 'ex-name', onclick: () => { if (isActive) navigate('/exercises/' + entry.exerciseId); },
       }, repo.exerciseName(entry.exerciseId)),
       h('button', { class: 'icon-btn', 'aria-label': 'Übungsmenü', onclick: () => exerciseMenu(entry) }, icon('more'))));
+
+    // Ziel & Pause (antippen = Einstellungen der Übung)
+    card.append(h('div', { class: 'ex-chips' },
+      h('button', { class: 'mini-chip' + (range ? ' set' : ''), onclick: () => openSettings(entry) },
+        range ? `Ziel ${range[0]}–${range[1]} Wdh.` : 'Wdh.-Ziel festlegen'),
+      isActive ? h('button', { class: 'mini-chip' + (settings.restByExercise?.[entry.exerciseId] ? ' set' : ''), onclick: () => openSettings(entry) },
+        icon('timer', { size: 14 }), fmtClock(restFor(entry.exerciseId, settings))) : null,
+      groupLetter ? h('span', { class: 'mini-chip superset-chip' }, `Supersatz ${groupLetter}`) : null));
 
     // Letztes Mal
     if (last) {
@@ -264,6 +322,11 @@ async function editorView(w, mode, { isNew = false } = {}) {
         shown + (work.length > 6 ? ' …' : '')));
     } else {
       card.append(h('div', { class: 'ex-last muted' }, 'Erstes Mal – noch keine Vorwerte'));
+    }
+    if (progression) {
+      card.append(h('div', { class: 'progress-hint' }, icon('up', { size: 18 }),
+        h('span', null, h('strong', null, `Steigern: ${fmtNum(progression.weight)} kg × ${progression.reps}`),
+          ` – letztes Mal alle Sätze mit ${range[1]} Wdh. geschafft`)));
     }
 
     // Notiz
@@ -285,6 +348,7 @@ async function editorView(w, mode, { isNew = false } = {}) {
     entry.sets.forEach((set, i) => {
       const prev = prevMatched[i];
       const num = h('button', { class: 'set-num', 'aria-label': 'Satzoptionen', onclick: () => setMenu(i) });
+      const cmp = h('span', { class: 'cmp', hidden: true });
       const prevBtn = h('button', {
         class: 'set-prev', disabled: !prev, 'aria-label': 'Vorwerte übernehmen',
         onclick: () => {
@@ -294,7 +358,7 @@ async function editorView(w, mode, { isNew = false } = {}) {
           rIn.value = set.reps ?? '';
           changed(); refreshStatus();
         },
-      }, prev ? fmtSet(prev, { unit: false }) : '–');
+      }, h('span', { class: 'prev-text' }, prev ? fmtSet(prev, { unit: false }) : '–'), cmp);
       const wIn = selectOnFocus(h('input', {
         class: 'set-input', type: 'text', inputmode: 'decimal', autocomplete: 'off', enterkeyhint: 'next',
         'aria-label': assisted ? 'Unterstützung in kg' : 'Gewicht in kg', value: fmtWeightInput(set.weight),
@@ -320,7 +384,7 @@ async function editorView(w, mode, { isNew = false } = {}) {
       });
       const check = h('button', { class: 'set-check', 'aria-label': 'Satz abhaken', onclick: () => toggleDone(i) }, icon('check'));
       const row = h('div', { class: 'set-row' }, num, prevBtn, wIn, rIn, check);
-      rows.push({ row, num, wIn, rIn, check });
+      rows.push({ row, num, wIn, rIn, check, cmp, prev });
       card.append(row);
     });
 
@@ -330,9 +394,9 @@ async function editorView(w, mode, { isNew = false } = {}) {
       onclick: () => { entry.sets.push(active.newSet()); changed(); rerender(); },
     }, icon('plus', { size: 20 }), 'Satz hinzufügen'));
 
-    // Graue Platzhalter: der passende Satz vom letzten Mal; nur wenn es den
-    // nicht gibt, der vorherige Satz dieses Trainings.
-    const placeholders = () => setSuggestions(entry.sets, prevSets);
+    // Graue Platzhalter: der passende Satz vom letzten Mal (bei Progression das
+    // neue Ziel); nur wenn es den nicht gibt, der vorherige Satz dieses Trainings.
+    const placeholders = () => setSuggestions(entry.sets, prevSets, { progression });
 
     function refreshStatus() {
       const prs = detectSetPRs(entry.sets, bests);
@@ -343,10 +407,18 @@ async function editorView(w, mode, { isNew = false } = {}) {
         r.row.classList.toggle('done', !!s.done);
         r.row.classList.toggle('warmup', s.type === 'warmup');
         r.row.classList.toggle('pr', prs[i].length > 0);
-        r.num.textContent = SET_LABEL[s.type] || String(++n);
+        const label = SET_LABEL[s.type] || String(++n);
+        if (s.rpe) r.num.replaceChildren(label, h('span', { class: 'rpe-badge' }, '@' + fmtNum(s.rpe)));
+        else r.num.replaceChildren(label);
         r.wIn.placeholder = ph[i].weight != null ? fmtWeightInput(ph[i].weight) : (assisted ? '−kg' : ex?.bodyweight ? '+kg' : 'kg');
         r.rIn.placeholder = ph[i].reps != null ? String(ph[i].reps) : '0';
         r.check.setAttribute('aria-pressed', s.done ? 'true' : 'false');
+        // Vergleich mit dem gleichen Satz vom letzten Mal
+        const c = s.done ? compareToPrevious(s, r.prev, range) : null;
+        r.cmp.hidden = c == null;
+        r.cmp.className = 'cmp ' + (c > 0 ? 'up' : c < 0 ? 'down' : 'same');
+        r.cmp.textContent = c > 0 ? '▲' : c < 0 ? '▼' : '=';
+        r.cmp.title = c > 0 ? 'besser als letztes Mal' : c < 0 ? 'schwächer als letztes Mal' : 'wie letztes Mal';
       });
       const found = [];
       prs.forEach((types, i) => {
@@ -371,14 +443,22 @@ async function editorView(w, mode, { isNew = false } = {}) {
           return;
         }
         s.done = true;
-        if (isActive && settings.restAuto) timer.start(settings.restSeconds);
       } else {
         s.done = false;
       }
       changed();
       const { prs } = refreshStatus();
-      if (s.done) advanceFrom(entry);
-      else activate(entry, i);
+      if (s.done) {
+        const rest = advanceAfterDone(entry);
+        if (isActive && settings.restAuto && rest) timer.start(restFor(entry.exerciseId, settings));
+        // Fertige Übung einklappen, sobald es woanders weitergeht
+        if (isActive && entry.sets.every((x) => x.done) && current?.entry !== entry) {
+          entry.collapsed = true;
+          rerender();
+        }
+      } else {
+        activate(entry, i);
+      }
       if (s.done && prs[i].length && !before) {
         toast('🏆 Neuer PR: ' + prs[i].map((t) => prLabel(t, ex)).join(', '), { kind: 'pr' });
       }
@@ -394,15 +474,47 @@ async function editorView(w, mode, { isNew = false } = {}) {
             : { label: 'Als Aufwärmsatz markieren (W)', value: 'warmup' },
           s.type === 'drop' ? null : { label: 'Als Dropsatz markieren (D)', value: 'drop' },
           s.type === 'drop' || s.type === 'failure' ? { label: 'Als normalen Satz markieren', value: 'normal' } : null,
+          { label: s.rpe ? `RPE ändern (jetzt ${fmtNum(s.rpe)})` : 'RPE eintragen (Anstrengung)', value: 'rpe', icon: 'flame' },
           { label: 'Satz löschen', value: 'delete', icon: 'trash', danger: true },
         ],
       });
       if (!choice) return;
-      if (choice === 'delete') entry.sets.splice(i, 1);
-      else if (choice === 'normal') delete s.type;
+      if (choice === 'rpe') { await chooseRpe(s); return; }
+      if (choice === 'delete') {
+        const [removed] = entry.sets.splice(i, 1);
+        changed();
+        rerender();
+        toast('Satz gelöscht', {
+          action: {
+            label: 'Rückgängig',
+            onClick: () => {
+              entry.sets.splice(Math.min(i, entry.sets.length), 0, removed);
+              changed();
+              cardApis.get(entry)?.rerender();
+            },
+          },
+        });
+        return;
+      }
+      if (choice === 'normal') delete s.type;
       else s.type = choice;
       changed();
       rerender();
+    }
+
+    async function chooseRpe(s) {
+      const choice = await actionSheet({
+        title: 'RPE – wie anstrengend war der Satz?',
+        message: '10 = nichts mehr drin · 9 = noch 1 Wdh. · 8 = noch 2 Wdh. · 7 = noch 3 Wdh.',
+        items: [
+          ...RPE_VALUES.map((v) => ({ label: `RPE ${fmtNum(v)}${s.rpe === v ? '  ✓' : ''}`, value: v })),
+          s.rpe ? { label: 'RPE entfernen', value: 'none', icon: 'trash', danger: true } : null,
+        ],
+      });
+      if (choice == null) return;
+      if (choice === 'none') delete s.rpe; else s.rpe = choice;
+      changed();
+      refreshStatus();
     }
 
     refreshStatus();
@@ -418,24 +530,47 @@ async function editorView(w, mode, { isNew = false } = {}) {
 
   async function exerciseMenu(entry) {
     const idx = w.exercises.indexOf(entry);
+    const next = w.exercises[idx + 1];
     const choice = await actionSheet({
       title: repo.exerciseName(entry.exerciseId),
       items: [
         idx > 0 ? { label: 'Nach oben', value: 'up', icon: 'up' } : null,
         idx < w.exercises.length - 1 ? { label: 'Nach unten', value: 'down', icon: 'down' } : null,
+        { label: 'Ziel, Pause & Gewichtsschritt', value: 'settings', icon: 'sliders' },
+        next && (!entry.group || next.group !== entry.group)
+          ? { label: `Supersatz mit „${repo.exerciseName(next.exerciseId)}“`, value: 'superset', icon: 'copy' } : null,
+        entry.group ? { label: 'Supersatz auflösen', value: 'unlink', icon: 'close' } : null,
         { label: entry.notes ? 'Notiz bearbeiten' : 'Notiz hinzufügen', value: 'note', icon: 'note' },
         { label: 'Übung ersetzen', value: 'replace', icon: 'restart' },
-        isActive ? { label: 'Fortschritt ansehen', value: 'progress', icon: 'trophy' } : null,
+        isActive ? { label: 'Fortschritt ansehen', value: 'progress', icon: 'chart' } : null,
         { label: 'Übung entfernen', value: 'remove', icon: 'trash', danger: true },
       ],
     });
     if (choice === 'up' || choice === 'down') {
       const j = idx + (choice === 'up' ? -1 : 1);
       [w.exercises[idx], w.exercises[j]] = [w.exercises[j], w.exercises[idx]];
+      fixGroups(w.exercises);
+      changed(); renderAll();
+    } else if (choice === 'settings') {
+      await openSettings(entry);
+    } else if (choice === 'superset') {
+      // Beide (bzw. die ganze Gruppe der nächsten Übung) in eine Gruppe
+      const g = entry.group || next.group || uid();
+      const old = next.group;
+      for (const e of w.exercises) if (old && e.group === old) e.group = g;
+      entry.group = g;
+      next.group = g;
+      fixGroups(w.exercises);
+      changed(); renderAll();
+      toast('Supersatz: abwechselnd, Pause erst nach der Runde');
+    } else if (choice === 'unlink') {
+      const g = entry.group;
+      for (const e of w.exercises) if (e.group === g) delete e.group;
       changed(); renderAll();
     } else if (choice === 'note') {
       entry.showNotes = true;
       entry.notes = entry.notes || '';
+      entry.collapsed = false;
       renderAll();
       const ta = list.children[idx]?.querySelector('textarea');
       ta?.focus();
@@ -445,12 +580,19 @@ async function editorView(w, mode, { isNew = false } = {}) {
     } else if (choice === 'progress') {
       navigate('/exercises/' + entry.exerciseId);
     } else if (choice === 'remove') {
-      const doneSets = entry.sets.filter((s) => s.done).length;
-      if (doneSets && !(await confirmDialog({
-        title: 'Übung entfernen?', message: `${doneSets} abgehakte Sätze gehen verloren.`, confirmLabel: 'Entfernen', danger: true,
-      }))) return;
       w.exercises.splice(idx, 1);
+      fixGroups(w.exercises);
       changed(); renderAll();
+      toast(`${repo.exerciseName(entry.exerciseId)} entfernt`, {
+        action: {
+          label: 'Rückgängig',
+          onClick: () => {
+            w.exercises.splice(Math.min(idx, w.exercises.length), 0, entry);
+            fixGroups(w.exercises);
+            changed(); renderAll();
+          },
+        },
+      });
     }
   }
 
@@ -459,8 +601,8 @@ async function editorView(w, mode, { isNew = false } = {}) {
     if (!ids.length) return;
     for (const id of ids) {
       const last = info(id).last;
-      const count = last ? Math.min(10, last.entry.sets.length) : 3;
-      w.exercises.push(active.newEntry(id, count));
+      const n = last ? Math.min(10, last.entry.sets.length) : 3;
+      w.exercises.push(active.newEntry(id, n));
     }
     changed();
     renderAll();
@@ -478,10 +620,6 @@ async function editorView(w, mode, { isNew = false } = {}) {
   async function finish() {
     document.activeElement?.blur();
     const { done, open } = countSets();
-    if (!done && isNew) {
-      toast('Füge eine Übung hinzu und hake mindestens einen Satz ab.');
-      return;
-    }
     if (!done) {
       if (await confirmDialog({
         title: 'Keine Sätze abgehakt', message: 'Es wurde noch kein Satz abgehakt. Möchtest du das Training verwerfen?',
@@ -501,28 +639,32 @@ async function editorView(w, mode, { isNew = false } = {}) {
     const stored = active.toStored(w);
     await repo.saveWorkout(stored);
     timer.stop();
+    keepAwake(false);
     await active.clear();
     await maybeUpdateTemplate(stored);
-    const prCount = computeAllPRs(await repo.workouts()).get(stored.id)?.count || 0;
-    toast(prCount ? `Training gespeichert – ${prCount} neue${prCount === 1 ? 'r' : ''} PR${prCount === 1 ? '' : 's'}! 🏆` : 'Training gespeichert 💪', { kind: prCount ? 'pr' : '' });
-    navigate('/history/' + stored.id, { replace: true });
+    navigate('/summary/' + stored.id, { replace: true });
   }
 
+  /**
+   * Vorlage nur ergänzen, nie verkleinern: neue Übungen und zusätzliche Sätze
+   * werden angeboten – übersprungene Übungen bleiben in der Vorlage.
+   */
   async function maybeUpdateTemplate(stored) {
     if (!stored.templateId) return;
     const t = await repo.getTemplate(stored.templateId);
     if (!t) return;
-    const now = stored.exercises.map((e) => ({ exerciseId: e.exerciseId, sets: e.sets.length }));
-    const same = now.length === t.exercises.length &&
-      now.every((e, i) => e.exerciseId === t.exercises[i].exerciseId && e.sets === t.exercises[i].sets);
-    if (same) return;
+    const r = mergeTemplate(t.exercises, stored.exercises);
+    if (!r.changed) return;
+    const parts = [];
+    if (r.added.length) parts.push('Neu: ' + r.added.map((id) => repo.exerciseName(id)).join(', '));
+    if (r.moreSets.length) parts.push('Mehr Sätze: ' + r.moreSets.map((id) => repo.exerciseName(id)).join(', '));
     if (await confirmDialog({
-      title: `Vorlage „${t.name}“ aktualisieren?`,
-      message: 'Übungen oder Satzanzahl weichen von der Vorlage ab. Soll die Vorlage an dieses Training angepasst werden?',
-      confirmLabel: 'Aktualisieren', cancelLabel: 'Nein',
+      title: `In Vorlage „${t.name}“ übernehmen?`,
+      message: parts.join('\n') + '\n\nÜbersprungene Übungen bleiben in der Vorlage.',
+      confirmLabel: 'Übernehmen', cancelLabel: 'Nein',
     })) {
-      await repo.saveTemplate({ ...t, exercises: now });
-      toast('Vorlage aktualisiert');
+      await repo.saveTemplate({ ...t, exercises: r.exercises });
+      toast('Vorlage ergänzt');
     }
   }
 
@@ -531,6 +673,7 @@ async function editorView(w, mode, { isNew = false } = {}) {
       title: 'Training verwerfen?', message: 'Alle Eingaben dieses Trainings werden gelöscht.', confirmLabel: 'Verwerfen', danger: true,
     }))) return;
     timer.stop();
+    keepAwake(false);
     await active.clear();
     navigate('/', { replace: true });
   }
@@ -541,6 +684,10 @@ async function editorView(w, mode, { isNew = false } = {}) {
     const minutes = parseNumber(durIn.value);
     const endedAt = minutes > 0 ? startedAt + Math.round(minutes * 60000) : null;
     const { done, open } = countSets();
+    if (!done && isNew) {
+      toast('Füge eine Übung hinzu und hake mindestens einen Satz ab.');
+      return;
+    }
     if (!done) {
       if (await confirmDialog({
         title: 'Keine Sätze mehr', message: 'Das Training enthält keine abgehakten Sätze. Training löschen?', confirmLabel: 'Löschen', danger: true,
@@ -591,7 +738,7 @@ async function editorView(w, mode, { isNew = false } = {}) {
       hideTabbar: true,
       actions: [h('button', { class: 'btn primary small', onclick: finish }, 'Beenden')],
       body,
-      cleanup: () => { clearInterval(interval); active.flush(); },
+      cleanup: () => { clearInterval(interval); active.flush(); keepAwake(false); },
     }
     : {
       title: isNew ? 'Nachtragen' : 'Bearbeiten',

@@ -28,6 +28,8 @@
   --tip-bg: #f3f5f8;
   --tip-text: #0e1013;
   --seg-active: #3a404a;
+  --superset: #9085e9;
+  --type-other: #5c6470;
 }
 
 [data-theme="light"] {
@@ -57,6 +59,8 @@
   --tip-bg: #1c2330;
   --tip-text: #ffffff;
   --seg-active: #ffffff;
+  --superset: #4a3aa7;
+  --type-other: #8a93a1;
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -849,3 +853,106 @@ button.stat { text-align: left; }
   user-select: text; -webkit-user-select: text; overflow-wrap: break-word;
 }
 .split-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+/* ---------- Ausbau: Rückgängig, Übungs-Chips, Supersätze, Vergleich ---------- */
+
+.toast.has-action { display: flex; align-items: center; gap: 14px; pointer-events: auto; }
+.toast-action { font-weight: 800; color: var(--accent); min-height: 36px; padding: 0 4px; }
+[data-theme="light"] .toast-action { color: #9cc7ff; }
+
+.ex-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 4px; }
+.mini-chip {
+  display: inline-flex; align-items: center; gap: 4px; min-height: 30px; padding: 0 10px;
+  border-radius: 999px; background: var(--surface-2); color: var(--text-3); font-size: 13px; font-weight: 600;
+}
+.mini-chip.set { color: var(--accent-text); background: rgba(43, 118, 220, .14); }
+.mini-chip.superset-chip { color: #fff; background: var(--superset); }
+.chips.wrap { flex-wrap: wrap; overflow: visible; }
+
+.ex-card.superset, .tpl-row.superset { border-left: 4px solid var(--superset); }
+.superset-tag {
+  width: 26px; height: 26px; flex: none; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--superset); color: #fff; font-size: 14px; font-weight: 800;
+}
+.link-btn {
+  align-self: center; min-height: 34px; margin: -4px 0; padding: 0 14px; border-radius: 999px;
+  border: 1px dashed var(--border); color: var(--text-3); font-size: 13px; font-weight: 700;
+}
+.link-btn.linked { border-style: solid; border-color: var(--superset); color: var(--superset); }
+.tpl-row .ex-chips { padding-left: 34px; }
+
+.progress-hint {
+  display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; border-radius: 10px;
+  background: rgba(43, 118, 220, .14); color: var(--accent-text); font-size: 14px;
+}
+.progress-hint strong { color: var(--text); }
+
+.cmp { margin-left: 4px; font-size: 12px; font-weight: 800; }
+.cmp.up { color: var(--success-text); }
+.cmp.down { color: var(--danger-text); }
+.cmp.same { color: var(--text-3); }
+
+.set-num { position: relative; }
+.rpe-badge {
+  position: absolute; left: 50%; bottom: -7px; transform: translateX(-50%);
+  padding: 0 4px; border-radius: 999px; background: var(--surface-3); color: var(--text-2);
+  font-size: 10px; font-weight: 800; line-height: 14px; white-space: nowrap;
+}
+.rpe-inline { color: var(--text-3); font-weight: 600; }
+
+.ex-card.collapsed { padding: 0; }
+.ex-collapsed { display: flex; align-items: center; gap: 10px; width: 100%; padding: 12px; text-align: left; }
+.ex-done-icon {
+  width: 30px; height: 30px; flex: none; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; background: var(--success); color: #fff;
+}
+.ex-done-icon .icon { stroke-width: 3; }
+.ex-collapsed-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+
+/* Einstellungen je Übung, Muskelgruppen zuordnen */
+.setting-group { display: flex; flex-direction: column; gap: 8px; }
+.setting-group h3, .setting-group p { margin: 0; }
+.cat-row { display: grid; grid-template-columns: minmax(0, 1fr) 140px; align-items: center; gap: 10px; padding: 8px 14px; }
+.cat-row span { overflow-wrap: break-word; }
+
+/* Startseite */
+.next-card { display: flex; align-items: center; gap: 12px; border-color: var(--accent); }
+.card.hint.warn { border-color: var(--warm); }
+.card.hint .hint-text { flex: 1; text-align: left; color: var(--text-2); font-size: 15px; }
+.card.hint .hint-text strong { color: var(--text); }
+.row-btn small { display: block; font-size: 13px; color: var(--text-3); }
+
+/* Zusammenfassung */
+.summary-hero { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 0 4px; text-align: center; }
+.summary-emoji { font-size: 48px; line-height: 1.1; }
+.summary-compare { margin: 0 4px; }
+.summary-ex-name { display: flex; flex-direction: column; min-width: 0; }
+.summary-ex-name small { font-size: 13px; }
+.pr-row.static { cursor: default; }
+
+/* Körper */
+.quick-weight { display: flex; flex-direction: column; gap: 6px; }
+.quick-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; }
+button.record { text-align: left; }
+.measure-tile.selected { border-color: var(--accent); }
+.measure-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.body-card { display: flex; align-items: center; gap: 12px; }
+
+/* Jahresrückblick */
+.year-hero { display: flex; flex-direction: column; gap: 12px; }
+.year-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.year-big { display: flex; flex-direction: column; }
+.year-value { font-size: 34px; font-weight: 800; }
+.rank {
+  width: 26px; height: 26px; flex: none; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--surface-2); color: var(--text); font-size: 13px; font-weight: 800;
+}
+
+/* Kalender: Farbe je Trainingsart (validiert für hell & dunkel, mit Legende) */
+.cal-day.trained.type-0, .lg-dot.type-0 { background: #3987e5; }
+.cal-day.trained.type-1, .lg-dot.type-1 { background: #d95926; }
+.cal-day.trained.type-2, .lg-dot.type-2 { background: #199e70; }
+.cal-day.trained.type-other, .lg-dot.type-other { background: var(--type-other); }
+.cal-day.trained { color: #fff; }

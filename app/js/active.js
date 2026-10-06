@@ -37,7 +37,7 @@ export async function start(template = null) {
     endedAt: null,
     notes: '',
     exercises: template
-      ? template.exercises.map((e) => newEntry(e.exerciseId, e.sets))
+      ? template.exercises.map((e) => ({ ...newEntry(e.exerciseId, e.sets), ...(e.group ? { group: e.group } : {}) }))
       : [],
   };
   await flush();
@@ -96,12 +96,13 @@ export function toStored(w) {
       .map((e) => ({
         exerciseId: e.exerciseId,
         notes: e.notes || '',
+        ...(e.group ? { group: e.group } : {}),
         sets: e.sets
           .filter((s) => s.done)
           .map(({ done, ...s }) => {
             const out = { weight: s.weight ?? null, reps: s.reps ?? null };
             if (s.type && s.type !== 'normal') out.type = s.type;
-            for (const k of ['distance', 'seconds', 'rpe']) if (s[k] != null) out[k] = s[k];
+            for (const k of ['distance', 'seconds', 'rpe', 'bw']) if (s[k] != null) out[k] = s[k];
             return out;
           }),
       }))
@@ -117,6 +118,7 @@ export function toEditable(w) {
       uid: uid(),
       exerciseId: e.exerciseId,
       notes: e.notes || '',
+      ...(e.group ? { group: e.group } : {}),
       sets: e.sets.map((s) => ({ ...s, done: true })),
     })),
   };

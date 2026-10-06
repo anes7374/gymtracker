@@ -156,7 +156,7 @@ export function strengthIndex(workouts, { activeWeeks = 6 } = {}) {
   for (const w of workouts) {
     const ws = startOfWeek(w.startedAt);
     for (const e of w.exercises || []) {
-      const v = sessionStats(e.sets).best1RM;
+      const v = sessionStats(e.sets).best1RMReliable;
       if (!(v > 0)) continue;
       if (!weekly.has(ws)) weekly.set(ws, new Map());
       const m = weekly.get(ws);
@@ -209,7 +209,7 @@ export function exerciseTrends(workouts, from, to, { minSessions = 3, threshold 
       const st = sessionStats(sets);
       if (!st.count) continue;
       if (!sessions.has(ex)) sessions.set(ex, []);
-      sessions.get(ex).push({ x: w.startedAt, e1rm: st.best1RM, weight: st.maxWeight, hasWeight: st.hasWeight, reps: st.maxReps, workoutId: w.id });
+      sessions.get(ex).push({ x: w.startedAt, e1rm: st.best1RMReliable, weight: st.maxWeight, hasWeight: st.hasWeight, reps: st.maxReps, workoutId: w.id });
     }
   }
   const avg = (arr) => arr.reduce((s, p) => s + p.y, 0) / arr.length;
@@ -264,4 +264,124 @@ export function recentPRs(workouts, prInfo, from = -Infinity) {
     });
   }
   return events.sort((a, b) => b.date - a.date);
+}
+
+// --- Plateaus ----------------------------------------------------------------------
+
+/**
+ * Übungen, die regelmäßig trainiert werden (≥ minRecent Trainings in den letzten
+ * 6 Wochen), aber seit `weeks` Wochen keinen neuen Bestwert hatten.
+ * Bestwert: geschätztes 1RM (verlässlich), sonst Gewicht, sonst Wiederholungen.
+ */
+export function plateaus(workouts, { now = Date.now(), weeks = 5, minRecent = 3 } = {}) {
+  const sessions = new Map();
+  for (const w of sortAsc(workouts)) {
+    if (w.startedAt > now) continue;
+    const perEx = new Map();
+    for (const e of w.exercises || []) {
+      if (!perEx.has(e.exerciseId)) perEx.set(e.exerciseId, []);
+      perEx.get(e.exerciseId).push(...(e.sets || []));
+    }
+    for (const [ex, sets] of perEx) {
+      const st = sessionStats(sets);
+      if (!st.count) continue;
+      if (!sessions.has(ex)) sessions.set(ex, []);
+      sessions.get(ex).push({ x: w.startedAt, e1rm: st.best1RMReliable, weight: st.hasWeight ? st.maxWeight : null, reps: st.maxReps });
+    }
+  }
+  const span = weeks * 7 * DAY;
+  const out = [];
+  for (const [exerciseId, list] of sessions) {
+    const metric = list.some((s) => s.e1rm > 0) ? 'e1rm' : list.some((s) => s.weight != null) ? 'weight' : 'reps';
+    let best = -Infinity, lastImprovement = list[0].x;
+    for (const s of list) {
+      const v = s[metric];
+      if (v == null || (metric !== 'weight' && !(v > 0))) continue;
+      if (v > best + 1e-9) { best = v; lastImprovement = s.x; }
+    }
+    const recent = list.filter((s) => s.x >= now - 6 * 7 * DAY).length;
+    if (recent >= minRecent && list[0].x <= now - span && now - lastImprovement >= span) {
+      out.push({ exerciseId, since: lastImprovement, weeks: Math.floor((now - lastImprovement) / (7 * DAY)), metric });
+    }
+  }
+  return out.sort((a, b) => b.weeks - a.weeks);
+}
+
+// --- Farben je Trainingsart (Kalender) ------------------------------------------------
+
+/**
+ * Ordnet den bis zu `slots` häufigsten Trainingsnamen (letzte 12 Monate) eine feste
+ * Farbnummer zu. Reihenfolge der Nummern: Vorlagen-Reihenfolge, sonst erstes Auftreten –
+ * so behält ein Trainingstag seine Farbe, auch wenn sich die Häufigkeit ändert.
+ * Rückgabe: { slotOf(name) -> 0..slots-1 | null, legend: [{ name, slot }] }
+ */
+export function workoutTypeColors(workouts, templates = [], { slots = 3, now = Date.now() } = {}) {
+  const key = (s) => String(s || '').trim().toLowerCase();
+  const counts = new Map();
+  const display = new Map();
+  const first = new Map();
+  for (const w of sortAsc(workouts)) {
+    const k = key(w.name);
+    if (!first.has(k)) first.set(k, w.startedAt);
+    if (!display.has(k)) display.set(k, (w.name || 'Training').trim());
+    if (w.startedAt >= now - 365 * DAY) counts.set(k, (counts.get(k) || 0) + 1);
+  }
+  const top = [...counts].sort((a, b) => b[1] - a[1]).slice(0, slots).map(([k]) => k);
+  const tplOrder = new Map(templates.map((t, i) => [key(t.name), i]));
+  top.sort((a, b) => (tplOrder.get(a) ?? 1e9) - (tplOrder.get(b) ?? 1e9) || first.get(a) - first.get(b));
+  const slotMap = new Map(top.map((k, i) => [k, i]));
+  return {
+    slotOf: (name) => slotMap.get(key(name)) ?? null,
+    legend: top.map((k, i) => ({ name: display.get(k), slot: i })),
+  };
+}
+
+// --- Jahresrückblick -------------------------------------------------------------------
+
+const WEEKDAY_NAMES = ['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag'];
+
+/** Kennzahlen eines Kalenderjahres. prInfo = computeAllPRs (über alle Trainings). */
+export function yearInReview(workouts, year, { prInfo = null, goal = 3, now = Date.now() } = {}) {
+  const from = new Date(year, 0, 1).getTime();
+  const to = new Date(year + 1, 0, 1).getTime();
+  const ws = sortAsc(workouts).filter((w) => w.startedAt >= from && w.startedAt < to);
+  const sum = periodSummary(ws, from, to, prInfo);
+  // Ø pro Woche nur über die Zeit, in der trainiert wurde (laufendes Jahr: bis heute)
+  if (ws.length) {
+    const span = Math.min(to, Math.max(now, ws[ws.length - 1].startedAt)) - ws[0].startedAt;
+    sum.perWeek = ws.length / Math.max(1, span / (7 * DAY));
+  }
+  const perMonth = Array(12).fill(0);
+  const perWeekday = Array(7).fill(0);
+  const exCount = new Map();
+  for (const w of ws) {
+    const d = new Date(w.startedAt);
+    perMonth[d.getMonth()]++;
+    perWeekday[(d.getDay() + 6) % 7]++;
+    for (const id of new Set(w.exercises.map((e) => e.exerciseId))) exCount.set(id, (exCount.get(id) || 0) + 1);
+  }
+  const topExercises = [...exCount].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([exerciseId, sessions]) => ({ exerciseId, sessions }));
+  const progress = exerciseTrends(ws, from, to, { minSessions: 4 })
+    .filter((t) => t.metric === 'e1rm' && t.change > 0)
+    .sort((a, b) => b.change - a.change)
+    .slice(0, 3)
+    .map((t) => ({ exerciseId: t.exerciseId, change: t.change, first: t.first, last: t.last }));
+  // längste Serie von Wochen mit erreichtem Wochenziel innerhalb des Jahres
+  const counts = countsByWeek(ws);
+  let bestStreak = 0, run = 0;
+  for (let wk = startOfWeek(from); wk < to; wk = addDays(wk, 7)) {
+    run = (counts.get(wk) || 0) >= goal ? run + 1 : 0;
+    bestStreak = Math.max(bestStreak, run);
+  }
+  const maxDay = Math.max(...perWeekday);
+  return {
+    year,
+    ...sum,
+    perMonth,
+    favoriteWeekday: maxDay > 0 ? WEEKDAY_NAMES[perWeekday.indexOf(maxDay)] : null,
+    topExercises,
+    progress,
+    bestStreak,
+    firstWorkout: ws[0]?.startedAt ?? null,
+  };
 }

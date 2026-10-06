@@ -6,6 +6,10 @@ import { confirmDialog } from '../ui/sheets.js';
 import { pickExercises } from '../ui/picker.js';
 import { navigate, back } from '../router.js';
 import * as repo from '../repo.js';
+import { exerciseSettingsSheet, restFor } from '../ui/exercise-settings.js';
+import { normalizeGroups } from '../lib/templates.js';
+import { uid } from '../lib/uid.js';
+import { fmtClock } from '../lib/format.js';
 
 export async function templateView(id) {
   const isNew = id === 'new';
@@ -25,9 +29,15 @@ export async function templateView(id) {
     if (!t.exercises.length) {
       list.append(h('div', { class: 'empty' }, h('p', null, 'Füge Übungen hinzu. Die Reihenfolge kannst du mit den Pfeilen ändern.')));
     }
+    const settings = repo.settingsSync();
+    const letters = new Map();
     t.exercises.forEach((e, i) => {
       const ex = repo.exercise(e.exerciseId);
-      list.append(h('div', { class: 'card tpl-row' },
+      if (e.group && !letters.has(e.group)) letters.set(e.group, String.fromCharCode(65 + letters.size));
+      const range = settings.repRanges?.[e.exerciseId];
+      const next = t.exercises[i + 1];
+      const linked = next && e.group && next.group === e.group;
+      list.append(h('div', { class: 'card tpl-row' + (e.group ? ' superset' : '') },
         h('div', { class: 'tpl-top' },
           h('span', { class: 'tpl-index' }, String(i + 1)),
           h('div', { class: 'tpl-name' },
@@ -39,18 +49,53 @@ export async function templateView(id) {
         h('div', { class: 'stepper' },
           h('button', { class: 'step', 'aria-label': 'Ein Satz weniger', disabled: e.sets <= 1, onclick: () => setSets(i, -1) }, '−'),
           h('span', { class: 'step-val' }, `${e.sets} ${e.sets === 1 ? 'Satz' : 'Sätze'}`),
-          h('button', { class: 'step', 'aria-label': 'Ein Satz mehr', disabled: e.sets >= 20, onclick: () => setSets(i, 1) }, '+'))));
+          h('button', { class: 'step', 'aria-label': 'Ein Satz mehr', disabled: e.sets >= 20, onclick: () => setSets(i, 1) }, '+')),
+        h('div', { class: 'ex-chips' },
+          h('button', { class: 'mini-chip' + (range ? ' set' : ''), onclick: () => openSettings(e) }, range ? `Ziel ${range[0]}–${range[1]} Wdh.` : 'Wdh.-Ziel festlegen'),
+          h('button', { class: 'mini-chip' + (settings.restByExercise?.[e.exerciseId] ? ' set' : ''), onclick: () => openSettings(e) },
+            icon('timer', { size: 14 }), fmtClock(restFor(e.exerciseId, settings))),
+          e.group ? h('span', { class: 'mini-chip superset-chip' }, `Supersatz ${letters.get(e.group)}`) : null)));
+      // Verbinden/Trennen zwischen zwei Übungen = Supersatz
+      if (next) {
+        list.append(h('button', {
+          class: 'link-btn' + (linked ? ' linked' : ''), 'aria-pressed': String(!!linked),
+          onclick: () => toggleLink(i),
+        }, linked ? 'Supersatz – trennen' : '+ Als Supersatz verbinden'));
+      }
     });
   }
 
+  const fixGroups = () => { t.exercises = normalizeGroups(t.exercises); };
   function move(i, dir) {
     const j = i + dir;
     [t.exercises[i], t.exercises[j]] = [t.exercises[j], t.exercises[i]];
+    fixGroups();
     dirty = true; renderList();
   }
   function remove(i) {
     t.exercises.splice(i, 1);
+    fixGroups();
     dirty = true; renderList();
+  }
+  /** Übung i und i+1 zu einem Supersatz verbinden bzw. dazwischen trennen. */
+  function toggleLink(i) {
+    const a = t.exercises[i], b = t.exercises[i + 1];
+    if (a.group && a.group === b.group) {
+      // trennen: alles ab b bekommt eine neue Gruppe (bzw. keine)
+      const g = a.group, fresh = uid();
+      for (let j = i + 1; j < t.exercises.length && t.exercises[j].group === g; j++) t.exercises[j].group = fresh;
+    } else {
+      const g = a.group || b.group || uid();
+      const old = b.group;
+      for (const e of t.exercises) if (old && e.group === old) e.group = g;
+      a.group = g; b.group = g;
+    }
+    fixGroups();
+    dirty = true; renderList();
+  }
+  async function openSettings(e) {
+    await exerciseSettingsSheet(e.exerciseId);
+    renderList();
   }
   function setSets(i, d) {
     t.exercises[i].sets = Math.max(1, Math.min(20, t.exercises[i].sets + d));

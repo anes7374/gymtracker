@@ -5,6 +5,7 @@ import { icon } from '../ui/icons.js';
 import { actionSheet, confirmDialog, alertDialog } from '../ui/sheets.js';
 import { pickExercises, exerciseForm } from '../ui/picker.js';
 import { lineChart } from '../ui/chart.js';
+import { exerciseSettingsSheet, assignCategoriesSheet, uncategorizedExercises } from '../ui/exercise-settings.js';
 import { navigate, back, refresh } from '../router.js';
 import * as repo from '../repo.js';
 import { CATEGORIES } from '../lib/exercises-data.js';
@@ -69,8 +70,16 @@ export async function exercisesView() {
   renderChips();
   renderList();
 
+  const uncategorized = await uncategorizedExercises();
   const body = h('div', { class: 'page' },
     h('div', { class: 'picker-top sticky' }, search, chips),
+    uncategorized.length
+      ? h('button', { class: 'card hint', onclick: async () => { if (await assignCategoriesSheet()) refresh(); } },
+        icon('list'),
+        h('span', null, h('strong', null, `${count(uncategorized.length, 'Übung', 'Übungen')} ohne Muskelgruppe`), h('br'),
+          'Zuordnen, damit „Sätze pro Muskelgruppe“ stimmt.'),
+        icon('chevron'))
+      : null,
     h('div', { class: 'list-tools' }, h('span', { class: 'muted small' }, `${all.length} Übungen`), sortBtn),
     list);
 
@@ -249,15 +258,20 @@ async function moveHistory(ex) {
 async function exerciseMenu(ex) {
   const choice = await actionSheet({
     title: ex.name,
-    items: ex.custom
-      ? [
-        { label: 'Bearbeiten', value: 'edit', icon: 'edit' },
-        { label: 'Zusammenführen mit …', value: 'merge', icon: 'copy' },
-        { label: 'Löschen', value: 'delete', icon: 'trash', danger: true },
-      ]
-      : [{ label: 'Verlauf übertragen nach …', value: 'merge', icon: 'copy' }],
+    items: [
+      { label: 'Ziel, Pause & Gewichtsschritt', value: 'settings', icon: 'sliders' },
+      ...(ex.custom
+        ? [
+          { label: 'Bearbeiten', value: 'edit', icon: 'edit' },
+          { label: 'Zusammenführen mit …', value: 'merge', icon: 'copy' },
+          { label: 'Löschen', value: 'delete', icon: 'trash', danger: true },
+        ]
+        : [{ label: 'Verlauf übertragen nach …', value: 'merge', icon: 'copy' }]),
+    ],
   });
-  if (choice === 'edit') {
+  if (choice === 'settings') {
+    await exerciseSettingsSheet(ex.id);
+  } else if (choice === 'edit') {
     if (await exerciseForm(ex)) { toast('Übung gespeichert'); refresh(); }
   } else if (choice === 'merge') {
     await moveHistory(ex);

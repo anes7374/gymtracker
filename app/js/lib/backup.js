@@ -7,12 +7,12 @@ export const BACKUP_FORMAT = 'gymtracker-backup';
 export const BACKUP_VERSION = 1;
 
 /** Erzeugt das Backup-Objekt aus allen Daten. */
-export function createBackup({ exercises = [], templates = [], workouts = [], settings = {} }, now = Date.now()) {
+export function createBackup({ exercises = [], templates = [], workouts = [], settings = {}, measurements = [] }, now = Date.now()) {
   return {
     format: BACKUP_FORMAT,
     version: BACKUP_VERSION,
     exportedAt: new Date(now).toISOString(),
-    data: { exercises, templates, workouts, settings },
+    data: { exercises, templates, workouts, settings, measurements },
   };
 }
 
@@ -40,11 +40,19 @@ function cleanSet(s) {
   if (!s || typeof s !== 'object') return null;
   const out = { weight: num(s.weight), reps: num(s.reps) };
   if (SET_TYPES.has(s.type)) out.type = s.type;
-  for (const k of ['distance', 'seconds', 'rpe']) {
+  for (const k of ['distance', 'seconds', 'rpe', 'bw']) {
     const v = num(s[k]);
     if (v != null) out[k] = v;
   }
   return out;
+}
+
+const MEASURE_KEYS = ['bodyweight', 'bodyfat', 'waist', 'chest', 'arm', 'thigh'];
+function cleanMeasurement(m) {
+  if (!m || typeof m !== 'object' || !id(m.id) || num(m.date) == null) return null;
+  const out = { id: m.id, date: num(m.date) };
+  for (const k of MEASURE_KEYS) { const v = num(m[k]); if (v != null && v > 0) out[k] = v; }
+  return Object.keys(out).length > 2 ? out : null;
 }
 
 function cleanExercise(e) {
@@ -69,7 +77,11 @@ function cleanTemplate(t) {
     order: num(t.order) ?? 0,
     exercises: (Array.isArray(t.exercises) ? t.exercises : [])
       .filter((x) => x && id(x.exerciseId))
-      .map((x) => ({ exerciseId: x.exerciseId, sets: Math.min(20, Math.max(1, Math.round(num(x.sets) ?? 3))) })),
+      .map((x) => ({
+        exerciseId: x.exerciseId,
+        sets: Math.min(20, Math.max(1, Math.round(num(x.sets) ?? 3))),
+        ...(id(x.group) ? { group: x.group } : {}),
+      })),
   };
   for (const k of ['createdAt', 'updatedAt']) if (num(t[k]) != null) out[k] = num(t[k]);
   return out;
@@ -92,6 +104,7 @@ function cleanWorkout(w) {
         exerciseId: x.exerciseId,
         notes: str(x.notes),
         sets: (Array.isArray(x.sets) ? x.sets : []).map(cleanSet).filter(Boolean),
+        ...(id(x.group) ? { group: x.group } : {}),
       })),
   };
   if (typeof w.source === 'string') out.source = w.source;
@@ -128,6 +141,7 @@ export function parseBackup(text) {
     throw new Error('Dieses Backup stammt von einer neueren App-Version. Bitte die App aktualisieren.');
   }
   const ex = cleanList(obj.data.exercises, cleanExercise);
+  const ms = cleanList(obj.data.measurements, cleanMeasurement);
   const tp = cleanList(obj.data.templates, cleanTemplate);
   const wo = cleanList(obj.data.workouts, cleanWorkout);
   const settings = obj.data.settings && typeof obj.data.settings === 'object' && !Array.isArray(obj.data.settings)
@@ -138,7 +152,8 @@ export function parseBackup(text) {
     templates: tp.ok,
     workouts: wo.ok,
     settings,
-    invalid: ex.invalid + tp.invalid + wo.invalid,
+    measurements: ms.ok,
+    invalid: ex.invalid + tp.invalid + wo.invalid + ms.invalid,
   };
 }
 
@@ -161,6 +176,7 @@ export function planBackupImport(current, incoming, mode, builtinIds = new Set()
       exercises: customOnly(incoming.exercises),
       templates: incoming.templates,
       workouts: incoming.workouts,
+      measurements: incoming.measurements || [],
       settings: { ...current.settings, ...incoming.settings },
     };
   }
@@ -168,6 +184,7 @@ export function planBackupImport(current, incoming, mode, builtinIds = new Set()
     exercises: mergeById(customOnly(current.exercises), customOnly(incoming.exercises)),
     templates: mergeById(current.templates, incoming.templates),
     workouts: mergeById(current.workouts, incoming.workouts),
+    measurements: mergeById(current.measurements || [], incoming.measurements || []),
     settings: current.settings,
   };
 }

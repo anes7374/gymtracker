@@ -1,9 +1,9 @@
 // Schlanker Promise-Wrapper um IndexedDB.
 
 const DB_NAME = 'gymtracker';
-const DB_VERSION = 1;
+const DB_VERSION = 2; // 2: Körpermaße (measurements)
 
-export const STORES = ['exercises', 'templates', 'workouts', 'meta'];
+export const STORES = ['exercises', 'templates', 'workouts', 'meta', 'measurements'];
 
 let dbPromise = null;
 
@@ -24,6 +24,7 @@ export function openDB() {
         s.createIndex('startedAt', 'startedAt');
       }
       if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta', { keyPath: 'key' });
+      if (!db.objectStoreNames.contains('measurements')) db.createObjectStore('measurements', { keyPath: 'id' });
     };
     req.onsuccess = () => {
       const db = req.result;
