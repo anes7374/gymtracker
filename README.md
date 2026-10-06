@@ -7,7 +7,8 @@ Läuft komplett offline, ohne Account und ohne Server. Alle Daten bleiben auf de
 
 - **Vorlagen**: unbegrenzt anlegen, bearbeiten, duplizieren, löschen, Reihenfolge ändern. Training aus Vorlage oder leer starten.
 - **Training loggen**: Sätze mit kg × Wiederholungen, Abhaken mit einem Tipp. Pro Übung „Letztes Mal: …“ und eine
-  „Vorher“-Spalte (antippen = übernehmen). Leere Felder werden beim Abhaken mit dem Vorschlag (grau) gefüllt.
+  „Vorher“-Spalte (antippen = übernehmen). Die grauen Vorschläge in leeren Feldern sind die Werte des **gleichen Satzes vom letzten Mal** (nur bei
+  zusätzlichen Sätzen der vorherige Satz); beim Abhaken leerer Felder werden sie übernommen.
   Aufwärm-/Dropsätze über die Satznummer markieren.
   **+/−-Knöpfe** unter dem aktuellen Satz: Wiederholungen in 1er-Schritten, Gewicht im Schritt, der aus dem
   Verlauf der Übung gelernt wird (z. B. 2,5 kg an der Maschine, 2 kg bei Kurzhanteln) – antippen zum Ändern, halten wiederholt.

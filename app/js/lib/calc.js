@@ -300,3 +300,38 @@ export function inferWeightStep(workouts, exerciseId, fallback = 2.5) {
   for (const [d, n] of counts) if (n > bestN || (n === bestN && d > best)) { best = d; bestN = n; }
   return bestN >= 2 ? best : fallback;
 }
+
+// --- Vorwerte beim Loggen -------------------------------------------------------
+
+/**
+ * Ordnet jedem Satz den passenden Satz vom letzten Mal zu: Aufwärmsatz zu
+ * Aufwärmsatz, Arbeitssatz zu Arbeitssatz (jeweils in Reihenfolge).
+ */
+export function matchPrevious(sets, prevSets = []) {
+  const warm = prevSets.filter((s) => s.type === 'warmup');
+  const work = prevSets.filter((s) => s.type !== 'warmup');
+  let w = 0, n = 0;
+  return sets.map((s) => (s.type === 'warmup' ? warm[w++] : work[n++]) || null);
+}
+
+/**
+ * Vorschläge (graue Platzhalter) für Gewicht und Wiederholungen:
+ * zuerst die Werte des passenden Satzes vom letzten Mal; gibt es den nicht
+ * (mehr Sätze als letztes Mal oder neue Übung), der vorherige Satz dieses
+ * Trainings (bzw. dessen Vorschlag).
+ */
+export function setSuggestions(sets, prevSets = []) {
+  const prev = matchPrevious(sets, prevSets);
+  const res = [];
+  sets.forEach((s, i) => {
+    const isWarm = s.type === 'warmup';
+    let j = i - 1;
+    while (j >= 0 && (sets[j].type === 'warmup') !== isWarm) j--;
+    const out = {};
+    for (const k of ['weight', 'reps']) {
+      out[k] = prev[i]?.[k] ?? (j >= 0 ? sets[j][k] ?? res[j][k] : null) ?? null;
+    }
+    res.push(out);
+  });
+  return res;
+}

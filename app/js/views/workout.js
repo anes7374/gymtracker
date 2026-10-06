@@ -11,6 +11,7 @@ import * as timer from '../timer.js';
 import { uid } from '../lib/uid.js';
 import {
   lastPerformance, bestsForExercise, detectSetPRs, computeAllPRs, prLabel, setMetrics, inferWeightStep, WEIGHT_STEPS,
+  matchPrevious, setSuggestions,
 } from '../lib/calc.js';
 import {
   parseNumber, fmtNum, fmtSet, fmtWeightInput, fmtClock, fmtDateTiny, toDateTimeLocal, fromDateTimeLocal, round,
@@ -164,14 +165,7 @@ async function editorView(w, mode, { isNew = false } = {}) {
     const { last, bests } = info(entry.exerciseId);
     const prevSets = last ? last.entry.sets : [];
     // Vorwerte zuordnen: Aufwärmsatz zu Aufwärmsatz, Arbeitssatz zu Arbeitssatz.
-    const prevWarm = prevSets.filter((s) => s.type === 'warmup');
-    const prevWork = prevSets.filter((s) => s.type !== 'warmup');
-    const prevFor = (i) => {
-      const isW = entry.sets[i].type === 'warmup';
-      let k = 0;
-      for (let j = 0; j < i; j++) if ((entry.sets[j].type === 'warmup') === isW) k++;
-      return (isW ? prevWarm : prevWork)[k];
-    };
+    const prevMatched = matchPrevious(entry.sets, prevSets);
     const rows = [];
     const card = h('section', { class: 'card ex-card' });
     const prLine = h('div', { class: 'pr-line', hidden: true });
@@ -289,7 +283,7 @@ async function editorView(w, mode, { isNew = false } = {}) {
       h('span', { class: 'set-head-check' }, icon('check', { size: 18 }))));
 
     entry.sets.forEach((set, i) => {
-      const prev = prevFor(i);
+      const prev = prevMatched[i];
       const num = h('button', { class: 'set-num', 'aria-label': 'Satzoptionen', onclick: () => setMenu(i) });
       const prevBtn = h('button', {
         class: 'set-prev', disabled: !prev, 'aria-label': 'Vorwerte übernehmen',
@@ -336,21 +330,9 @@ async function editorView(w, mode, { isNew = false } = {}) {
       onclick: () => { entry.sets.push(active.newSet()); changed(); rerender(); },
     }, icon('plus', { size: 20 }), 'Satz hinzufügen'));
 
-    // Platzhalter: vorheriger Satz dieses Trainings, sonst Vorwerte vom letzten Mal.
-    function placeholders() {
-      const res = [];
-      entry.sets.forEach((s, i) => {
-        const isW = s.type === 'warmup';
-        let j = i - 1;
-        while (j >= 0 && (entry.sets[j].type === 'warmup') !== isW) j--;
-        const out = {};
-        for (const k of ['weight', 'reps']) {
-          out[k] = (j >= 0 ? entry.sets[j][k] : null) ?? prevFor(i)?.[k] ?? (j >= 0 ? res[j][k] : null) ?? null;
-        }
-        res.push(out);
-      });
-      return res;
-    }
+    // Graue Platzhalter: der passende Satz vom letzten Mal; nur wenn es den
+    // nicht gibt, der vorherige Satz dieses Trainings.
+    const placeholders = () => setSuggestions(entry.sets, prevSets);
 
     function refreshStatus() {
       const prs = detectSetPRs(entry.sets, bests);
